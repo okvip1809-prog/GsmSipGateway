@@ -88,32 +88,13 @@ jobs:
 
           printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
 
-          # Add Linphone Maven repository to settings.gradle
+          # Add Linphone Maven repository - insert after google() in settings.gradle
           SETTINGS=$APP/android/settings.gradle
-          echo "=== settings.gradle before ==="
-          cat $SETTINGS
-          # Insert Linphone repo into dependencyResolutionManagement.repositories block
-          python3 -c "
-import re, sys
-with open('$APP/android/settings.gradle', 'r') as f:
-    content = f.read()
-# Add linphone repo to the first 'repositories {' found inside dependencyResolutionManagement
-modified = re.sub(
-    r'(dependencyResolutionManagement\s*\{[^{]*repositories\s*\{)',
-    r'\1\n        maven { url \"https://linphone.org/maven_repository\" }',
-    content, count=1, flags=re.DOTALL)
-if modified == content:
-    # Fallback: append allprojects block to root build.gradle
-    with open('$APP/android/build.gradle', 'a') as bf:
-        bf.write('\nallprojects { repositories { maven { url \"https://linphone.org/maven_repository\" } } }\n')
-    print('Fallback: added Linphone repo to root build.gradle allprojects')
-else:
-    with open('$APP/android/settings.gradle', 'w') as f:
-        f.write(modified)
-    print('Added Linphone repo to settings.gradle')
-"
-          echo "=== settings.gradle after ==="
-          grep -A3 "linphone" $SETTINGS || echo "(not found in settings - check build.gradle fallback)"
+          sed -i "s|google()|google()\n        maven { url 'https://linphone.org/maven_repository' }|g" $SETTINGS
+          echo "=== Linphone repo check ==="
+          grep -n "linphone" $SETTINGS && echo "OK" || echo "Not found in settings.gradle"
+          # Also add to root build.gradle as fallback
+          printf '\nallprojects {\n  repositories {\n    maven { url "https://linphone.org/maven_repository" }\n  }\n}\n' >> $APP/android/build.gradle
 
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
