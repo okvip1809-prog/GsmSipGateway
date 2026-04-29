@@ -1,20 +1,38 @@
 package com.gsmsipgateway;
 
-import android.app.PendingIntent;
 import android.content.Context;
-import android.content.Intent;
-import android.net.sip.*;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
+import org.linphone.core.Account;
+import org.linphone.core.AccountParams;
+import org.linphone.core.Address;
+import org.linphone.core.AuthInfo;
+import org.linphone.core.Call;
+import org.linphone.core.CallParams;
+import org.linphone.core.Core;
+import org.linphone.core.CoreListenerStub;
+import org.linphone.core.Factory;
+import org.linphone.core.MediaEncryption;
+import org.linphone.core.Reason;
+import org.linphone.core.RegistrationState;
+
+/**
+ * SIP Engine using Linphone SDK 5.x
+ * Replaces android.net.sip which was removed on Android 12+
+ */
 public class LinphoneEngine {
     private static final String TAG = "SipEngine";
-    // FIX: Store context as a field so it can be referenced from nested methods
+
     private final Context ctx;
-    private SipManager sipManager;
-    private SipProfile localProfile;
-    private SipAudioCall currentCall;
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private Core core;
     private BridgeCallback callback;
-    private String host, user;
+    private Call currentCall;
+    private String host;
+    private int port;
+    private String user;
 
     public interface BridgeCallback {
         void onSipRegistered();
@@ -23,7 +41,6 @@ public class LinphoneEngine {
         void onSipCallEnded();
     }
 
-    /** Maps android.net.sip.SipErrorCode int values to human-readable names */
     public static String sipErrorName(int code) {
         switch (code) {
             case 0:  return "NO_ERROR";
@@ -39,112 +56,157 @@ public class LinphoneEngine {
     }
 
     public LinphoneEngine(Context ctx, BridgeCallback cb) {
-        // FIX: Save context field so it can be used in PendingIntent and elsewhere
         this.ctx = ctx.getApplicationContext();
         this.callback = cb;
-        boolean voipOk = SipManager.isVoipSupported(ctx);
-        boolean apiOk  = SipManager.isApiSupported(ctx);
-        if (voipOk && apiOk) {
-            sipManager = SipManager.newInstance(ctx);
-            Log.d(TAG, "SipManager created successfully");
-        } else {
-            Log.e(TAG, "SIP NOT supported on this device: isVoipSupported=" + voipOk + " isApiSupported=" + apiOk);
-            if (callback != null) callback.onSipRegistrationFailed(-1, "SIP API not supported on this device (isVoip=" + voipOk + ")");
+        try {
+            Factory factory = Factory.instance();
+            factory.setDebugMode(false, TAG);
+            core = factory.createCore(null, null, this.ctx);
+            setupListeners();
+            Log.d(TAG, "Linphone Core created successfully (Android 12+ compatible)");
+        } catch (Exception e) {
+            Log.e(TAG, "Linphone Core init failed: " + e.getMessage());
+            if (callback != null) {
+                callback.onSipRegistrationFailed(-1, "Core init failed: " + e.getMessage());
+            }
         }
+    }
+
+    private void setupListeners() {
+        core.addListener(new CoreListenerStub() {
+            @Override
+            public void onAccountRegistrationStateChanged(Core core, Account account,
+                    RegistrationState state, String message) {
+                Log.d(TAG, "Registration state: " + state + " | " + message);
+                if (state == RegistrationState.Ok) {
+                    mainHandler.post(() -> {
+                        if (callback != null) callback.onSipRegistered();
+                    });
+                } else if (state == RegistrationState.Failed) {
+                    Reason reason = account.getError() != null ? account.getError() : Reason.Unknown;
+                    int code = reason.toInt();
+                    String errMsg = sipErrorName(code) + ": " + message;
+                    Log.e(TAG, "Registration FAILED | code=" + code + " | " + errMsg);
+                    mainHandler.post(() -> {
+                        if (callback != null) callback.onSipRegistrationFailed(code, errMsg);
+                    });
+                }
+            }
+
+            @Override
+            public void onCallStateChanged(Core core, Call call, Call.State state, String message) {
+                Log.d(TAG, "Call state: " + state + " | " + message);
+                switch (state) {
+                    case Connected:
+                    case StreamsRunning:
+                        currentCall = call;
+                        mainHandler.post(() -> {
+                            if (callback != null) callback.onSipCallConnected();
+                        });
+                        break;
+                    case End:
+                    case Released:
+                    case Error:
+                        currentCall = null;
+                        mainHandler.post(() -> {
+                            if (callback != null) callback.onSipCallEnded();
+                        });
+                        break;
+                    default:
+                        break;
+                }
+            }
+        });
     }
 
     public void register(String host, int port, String user, String pass) {
         this.host = host;
+        this.port = port;
         this.user = user;
-        if (sipManager == null) {
-            Log.e(TAG, "register skipped: SIP manager unavailable");
-            if (callback != null) callback.onSipRegistrationFailed(-1, "SipManager is null");
+
+        if (core == null) {
+            Log.e(TAG, "register skipped: core is null");
+            if (callback != null) callback.onSipRegistrationFailed(-1, "Core not initialized");
             return;
         }
-        try {
-            if (localProfile != null) {
-                try { sipManager.close(localProfile.getUriString()); } catch (Exception ignored) {}
-            }
-            SipProfile.Builder builder = new SipProfile.Builder(user, host);
-            builder.setPassword(pass);
-            // FIX: setAuthUserName is required by Asterisk/FreePBX PJSIP to authenticate correctly
-            builder.setAuthUserName(user);
-            builder.setPort(port);
-            builder.setProtocol("UDP");
-            // FIX: Removed builder.setOutboundProxy(host+":"+port) — mixing port into the proxy
-            // domain string was malformed and caused Asterisk to reject the REGISTER request.
-            // Port is already handled by setPort() above.
-            builder.setAutoRegistration(true);
-            localProfile = builder.build();
-            Log.d(TAG, "SipProfile built: uri=" + localProfile.getUriString() + " host=" + host + " port=" + port + " user=" + user);
 
-            Intent intent = new Intent();
-            intent.setAction("android.SipDemo.INCOMING_CALL");
-            // FIX: Use stored ctx field instead of null — passing null caused NullPointerException
-            PendingIntent pi = PendingIntent.getBroadcast(
-                this.ctx, 0, intent,
-                PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
-            );
-            sipManager.open(localProfile, pi, null);
-            sipManager.setRegistrationListener(localProfile.getUriString(),
-                new SipRegistrationListener() {
-                    @Override public void onRegistering(String localProfileUri) {
-                        Log.d(TAG, "Registering...");
-                    }
-                    @Override public void onRegistrationDone(String localProfileUri, long expiryTime) {
-                        Log.d(TAG, "Registered OK | uri=" + localProfileUri + " | expires=" + expiryTime);
-                        if (callback != null) callback.onSipRegistered();
-                    }
-                    @Override public void onRegistrationFailed(String localProfileUri, int errorCode, String errorMessage) {
-                        Log.e(TAG, "Registration FAILED | code=" + errorCode + " (" + sipErrorName(errorCode) + ") | msg=" + errorMessage + " | uri=" + localProfileUri);
-                        if (callback != null) callback.onSipRegistrationFailed(errorCode, sipErrorName(errorCode) + ": " + errorMessage);
-                    }
-                });
+        try {
+            // Remove existing accounts and auth info
+            for (Account acc : core.getAccountList()) {
+                core.removeAccount(acc);
+            }
+            core.clearAllAuthInfo();
+
+            // Add authentication info
+            AuthInfo authInfo = Factory.instance().createAuthInfo(
+                user, user, pass, null, null, host);
+            core.addAuthInfo(authInfo);
+
+            // Build account params
+            AccountParams params = core.createAccountParams();
+
+            // Identity: sip:user@host
+            Address identity = Factory.instance().createAddress("sip:" + user + "@" + host);
+            if (identity == null) throw new Exception("Invalid identity address");
+            params.setIdentityAddress(identity);
+
+            // Server: sip:host:port;transport=udp
+            Address serverAddr = Factory.instance()
+                    .createAddress("sip:" + host + ":" + port + ";transport=udp");
+            if (serverAddr == null) throw new Exception("Invalid server address");
+            params.setServerAddress(serverAddr);
+
+            params.setRegisterEnabled(true);
+            params.setExpires(60);
+            params.setPublishEnabled(false);
+
+            Account account = core.createAccount(params);
+            core.addAccount(account);
+            core.setDefaultAccount(account);
+
+            // Start core if not started
+            if (!core.isStarted()) {
+                core.start();
+            }
+
+            Log.d(TAG, "SIP register initiated: sip:" + user + "@" + host + ":" + port);
         } catch (Exception e) {
-            Log.e(TAG, "register exception: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            Log.e(TAG, "register exception: " + e.getMessage());
             if (callback != null) callback.onSipRegistrationFailed(-2, "Exception: " + e.getMessage());
         }
     }
 
     public boolean callSip(String ext, String remoteHost, int remotePort) {
-        if (sipManager == null || localProfile == null) {
-            Log.e(TAG, "callSip skipped: SIP stack not ready");
+        if (core == null) {
+            Log.e(TAG, "callSip skipped: core is null");
             return false;
         }
         if (ext == null || ext.trim().isEmpty()) {
-            Log.e(TAG, "callSip skipped: empty bridge extension");
+            Log.e(TAG, "callSip skipped: empty extension");
             return false;
         }
+
         try {
             String cleanExt = ext.trim();
-            String peerUri;
+            String uri;
             if (cleanExt.startsWith("sip:")) {
-                peerUri = cleanExt;
+                uri = cleanExt;
             } else if (cleanExt.contains("@")) {
-                peerUri = "sip:" + cleanExt;
+                uri = "sip:" + cleanExt;
             } else {
-                peerUri = "sip:" + cleanExt + "@" + remoteHost + ":" + remotePort;
+                uri = "sip:" + cleanExt + "@" + remoteHost + ":" + remotePort;
             }
-            Log.d(TAG, "Dialing peerUri=" + peerUri + " from " + localProfile.getUriString());
-            currentCall = sipManager.makeAudioCall(
-                localProfile.getUriString(),
-                peerUri,
-                new SipAudioCall.Listener() {
-                    @Override public void onCallEstablished(SipAudioCall call) {
-                        call.startAudio();
-                        if (callback != null) callback.onSipCallConnected();
-                    }
-                    // FIX: Removed misaligned blank line before @Override
-                    @Override public void onCallEnded(SipAudioCall call) {
-                        if (callback != null) callback.onSipCallEnded();
-                    }
-                    @Override public void onError(SipAudioCall call, int errorCode, String errorMessage) {
-                        Log.e(TAG, "Call error: " + errorMessage);
-                        if (callback != null) callback.onSipCallEnded();
-                    }
-                }, 30
-            );
-            return currentCall != null;
+
+            Log.d(TAG, "Dialing: " + uri);
+            Address addr = Factory.instance().createAddress(uri);
+            if (addr == null) { Log.e(TAG, "Invalid address: " + uri); return false; }
+
+            CallParams callParams = core.createCallParams(null);
+            if (callParams == null) return false;
+            callParams.setMediaEncryption(MediaEncryption.None);
+
+            Call call = core.inviteAddressWithParams(addr, callParams);
+            return call != null;
         } catch (Exception e) {
             Log.e(TAG, "callSip error: " + e.getMessage());
             return false;
@@ -154,8 +216,7 @@ public class LinphoneEngine {
     public void hangup() {
         try {
             if (currentCall != null) {
-                currentCall.endCall();
-                currentCall.close();
+                currentCall.terminate();
                 currentCall = null;
             }
         } catch (Exception e) {
@@ -166,11 +227,12 @@ public class LinphoneEngine {
     public void destroy() {
         hangup();
         try {
-            if (localProfile != null && sipManager != null) {
-                sipManager.close(localProfile.getUriString());
+            if (core != null) {
+                core.stop();
             }
         } catch (Exception e) {
             Log.e(TAG, "destroy error: " + e.getMessage());
         }
+        core = null;
     }
 }
