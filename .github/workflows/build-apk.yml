@@ -88,15 +88,21 @@ jobs:
 
           printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
 
-
-
-          # Add Linphone Maven repository - insert after google() in settings.gradle
+          # Add Linphone Maven repository to settings.gradle
           SETTINGS=$APP/android/settings.gradle
+          # Add after google() AND after mavenCentral() for reliability
           sed -i "s|google()|google()\n        maven { url 'https://download.linphone.org/releases/maven_repository' }|g" $SETTINGS
           echo "=== Linphone repo check ==="
           grep -n "linphone" $SETTINGS && echo "OK: Linphone in settings.gradle" || echo "ERROR: Not found"
-          echo "=== settings.gradle content ==="
-          cat $SETTINGS
+          # Write settings.gradle to step summary (publicly visible)
+          echo '## settings.gradle after patch' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $SETTINGS >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '## app/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $BFILE >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
@@ -106,8 +112,8 @@ jobs:
             'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
             'newArchEnabled=false' \
             'hermesEnabled=true' \
-            'android.dependencyResolutionStrategy=preferProjectRepos' \
             > $APP/android/gradle.properties
+
 
           printf '%s\n' \
             'distributionBase=GRADLE_USER_HOME' \
@@ -139,12 +145,18 @@ jobs:
           set +e
           ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
           BUILD_EXIT=${PIPESTATUS[0]}
-          echo "=== LAST 100 LINES OF GRADLE LOG ==="
-          tail -100 /tmp/gradle.log
+          # Write error summary publicly via step summary
+          echo '## Gradle Build Output (last 80 lines)' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -80 /tmp/gradle.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "=== LAST 80 LINES OF GRADLE LOG ==="
+          tail -80 /tmp/gradle.log
           exit $BUILD_EXIT
         env:
           GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
           JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8"
+
 
       - name: Upload Build Log
         if: always()
