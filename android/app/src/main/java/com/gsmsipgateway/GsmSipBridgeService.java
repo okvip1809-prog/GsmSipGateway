@@ -20,6 +20,8 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
     private boolean isSipRegistered = false;
     private boolean bridgeInProgress = false;
     private int bridgeAttempts = 0;
+    private int sipRetryCount = 0;
+    private static final int MAX_SIP_RETRIES = 5;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable bridgeRunnable = this::bridgeToExtension;
     private final Runnable answerRunnable = this::answerAndBridge;
@@ -45,21 +47,22 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
 
     private void reload() {
         SharedPreferences p = getSharedPreferences("sip_config", MODE_PRIVATE);
-        host = p.getString("host", "192.168.1.100");
+        host = p.getString("host", "103.82.193.58");
         port = p.getInt("port", 5060);
-        user = p.getString("username", "android_gsm1");
+        user = p.getString("username", "3001");
         pass = p.getString("password", "");
-        ext  = p.getString("bridge_ext", "1000");
+        ext  = p.getString("bridge_ext", "1001");
         answerRings = Math.max(1, p.getInt("answer_rings", 1));
         isSipRegistered = false;
         bridgeInProgress = false;
         bridgeAttempts = 0;
+        sipRetryCount = 0;
         handler.removeCallbacks(answerRunnable);
         handler.removeCallbacks(bridgeRunnable);
         if (sip != null) sip.destroy();
         sip = new LinphoneEngine(this, this);
         sip.register(host, port, user, pass);
-        updateNote("Registering on FreePBX...");
+        updateNote("Registering SIP " + user + "@" + host + ":" + port + "...");
     }
 
     @Override
@@ -134,16 +137,23 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         updateNote("SIP Registered - Ready");
     }
 
-    @Override public void onSipRegistrationFailed() {
+    @Override public void onSipRegistrationFailed(int errorCode, String errorMessage) {
         isSipRegistered = false;
-        Log.e(TAG, "SIP Registration failed, will retry in 2000ms");
-        updateNote("Registration Failed - Retrying...");
+        sipRetryCount++;
+        Log.e(TAG, "SIP Registration failed | code=" + errorCode + " | " + errorMessage + " | attempt=" + sipRetryCount);
+        if (sipRetryCount > MAX_SIP_RETRIES) {
+            Log.e(TAG, "Giving up after " + MAX_SIP_RETRIES + " attempts.");
+            updateNote("❌ Reg Failed [" + LinphoneEngine.sipErrorName(errorCode) + "] - Check config");
+            return;
+        }
+        long delayMs = Math.min(5000L * (1L << (sipRetryCount - 1)), 60000L);
+        updateNote("Reg failed [" + LinphoneEngine.sipErrorName(errorCode) + "] retry " + sipRetryCount + "/" + MAX_SIP_RETRIES + " in " + (delayMs/1000) + "s");
         handler.postDelayed(() -> {
             if (sip != null) {
                 Log.d(TAG, "Retrying SIP registration...");
                 sip.register(host, port, user, pass);
             }
-        }, 2000);
+        }, delayMs);
     }
 
     @Override public void onSipCallConnected() { updateNote("Bridge Active"); }

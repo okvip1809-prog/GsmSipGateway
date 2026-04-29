@@ -33,11 +33,11 @@ const Field = memo(function Field({
 });
 
 export default function App() {
-  const [host, setHost] = useState('192.168.1.100');
+  const [host, setHost] = useState('103.82.193.58');
   const [port, setPort] = useState('5060');
-  const [username, setUsername] = useState('android_gsm1');
-  const [password, setPassword] = useState('');
-  const [bridgeExtension, setBridgeExtension] = useState('1000');
+  const [username, setUsername] = useState('3001');
+  const [password, setPassword] = useState('Gateway3001');
+  const [bridgeExtension, setBridgeExtension] = useState('1001');
   const [answerRings, setAnswerRings] = useState('1');
   const [status, setStatus] = useState('Not configured');
 
