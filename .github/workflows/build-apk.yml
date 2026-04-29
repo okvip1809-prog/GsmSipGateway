@@ -99,6 +99,13 @@ jobs:
           printf '\nallprojects {\n    repositories {\n        maven { url "https://download.linphone.org/releases/maven_repository" }\n    }\n}\n' >> $ROOT_BUILD
           echo "=== Linphone in root build.gradle ==="
           grep -n 'linphone' $ROOT_BUILD && echo 'OK: Linphone in root build.gradle' || echo 'ERROR: Not found'
+
+          # Fix minSdkVersion in root build.gradle (RN 0.73.x stores it in ext block here)
+          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
+          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
+          echo "=== minSdk in root build.gradle ==="
+          grep 'minSdkVersion' $ROOT_BUILD || echo 'minSdkVersion not in root (check app/build.gradle)'
+
           # Write diagnostics to step summary
           echo '## settings.gradle after patch' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
