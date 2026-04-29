@@ -1,0 +1,137 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Init React Native project
+        run: npx react-native@0.73.6 init AppProject --version 0.73.6 --skip-install
+
+      - name: Install dependencies
+        run: |
+          cd $GITHUB_WORKSPACE/AppProject
+          npm install --legacy-peer-deps
+          npm install @react-native-async-storage/async-storage@1.21.0 --legacy-peer-deps
+
+      - name: Replace template Java/Kotlin with our source files
+        run: |
+          APP=$GITHUB_WORKSPACE/AppProject
+          SRC=$GITHUB_WORKSPACE/source
+          KTDIR=$APP/android/app/src/main/java
+
+          # Delete ALL template-generated .kt and .java files to avoid duplicates
+          find $KTDIR -name "*.kt" -delete
+          find $KTDIR -name "*.java" -delete
+          echo "Deleted all template source files"
+
+          # Copy our Java files into correct package dir
+          PKG=$KTDIR/com/gsmsipgateway
+          mkdir -p $PKG
+          cp $SRC/android/app/src/main/java/com/gsmsipgateway/*.java $PKG/
+          echo "=== Our Java files ==="
+          ls -la $PKG/
+
+          # JS files
+          mkdir -p $APP/src
+          cp $SRC/src/App.js $APP/src/App.js
+          cp $SRC/index.js $APP/index.js
+          cp $SRC/app.json $APP/app.json
+
+          # AndroidManifest
+          cp $SRC/android/app/src/main/AndroidManifest.xml \
+             $APP/android/app/src/main/AndroidManifest.xml
+
+          # res/values
+          mkdir -p $APP/android/app/src/main/res/values
+          cp $SRC/android/app/src/main/res/values/strings.xml \
+             $APP/android/app/src/main/res/values/strings.xml
+          cp $SRC/android/app/src/main/res/values/styles.xml \
+             $APP/android/app/src/main/res/values/styles.xml
+
+          cp $SRC/android/app/proguard-rules.pro $APP/android/app/proguard-rules.pro
+
+      - name: Patch gradle files
+        run: |
+          APP=$GITHUB_WORKSPACE/AppProject
+          BFILE=$APP/android/app/build.gradle
+
+          sed -i 's/namespace \"com\.appproject\"/namespace \"com.gsmsipgateway\"/' $BFILE
+          sed -i 's/applicationId \"com\.appproject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
+          sed -i 's/namespace \"com\.AppProject\"/namespace \"com.gsmsipgateway\"/' $BFILE
+          sed -i 's/applicationId \"com\.AppProject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
+          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $BFILE
+          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
+
+          sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
+          sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
+
+          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n}\n' >> $BFILE
+
+          sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
+
+          printf '%s\n' \
+            'android.useAndroidX=true' \
+            'android.enableJetifier=true' \
+            'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
+            'newArchEnabled=false' \
+            'hermesEnabled=true' \
+            > $APP/android/gradle.properties
+
+          printf '%s\n' \
+            'distributionBase=GRADLE_USER_HOME' \
+            'distributionPath=wrapper/dists' \
+            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip' \
+            'networkTimeout=10000' \
+            'zipStoreBase=GRADLE_USER_HOME' \
+            'zipStorePath=wrapper/dists' \
+            > $APP/android/gradle/wrapper/gradle-wrapper.properties
+
+          echo "=== app/build.gradle ==="
+          cat $BFILE
+
+      - name: Generate Keystore
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/AppProject/android/app/keystore
+          # FIX: Removed stray blank line between "keytool -genkeypair -v \" and "-keystore ..."
+          # The blank line was breaking the shell line-continuation (\) causing keytool to fail
+          keytool -genkeypair -v \
+            -keystore $GITHUB_WORKSPACE/AppProject/android/app/keystore/release.keystore \
+            -alias release -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android123 -keypass android123 \
+            -dname "CN=GsmSipGateway,OU=Dev,O=Dev,L=Cairo,ST=Cairo,C=EG"
+
+      - name: Build Release APK
+        run: |
+          cd $GITHUB_WORKSPACE/AppProject/android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+        env:
+          GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=512m"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: GsmSipGateway-release
+          path: AppProject/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
