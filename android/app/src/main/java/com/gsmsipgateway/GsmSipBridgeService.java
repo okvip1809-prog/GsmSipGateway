@@ -143,7 +143,7 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         Log.e(TAG, "SIP Registration failed | code=" + errorCode + " | " + errorMessage + " | attempt=" + sipRetryCount);
         if (sipRetryCount > MAX_SIP_RETRIES) {
             Log.e(TAG, "Giving up after " + MAX_SIP_RETRIES + " attempts.");
-            updateNote("❌ Reg Failed [" + LinphoneEngine.sipErrorName(errorCode) + "] - Check config");
+            updateNote("[FAILED] Reg [" + LinphoneEngine.sipErrorName(errorCode) + "] - Check server/credentials");
             return;
         }
         long delayMs = Math.min(5000L * (1L << (sipRetryCount - 1)), 60000L);
