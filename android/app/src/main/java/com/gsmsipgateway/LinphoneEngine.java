@@ -164,10 +164,8 @@ public class LinphoneEngine {
             core.addAccount(account);
             core.setDefaultAccount(account);
 
-            // Start core if not started
-            if (!core.isStarted()) {
-                core.start();
-            }
+            // Start core (safe to call even if already running in Linphone 5.x)
+            core.start();
 
             Log.d(TAG, "SIP register initiated: sip:" + user + "@" + host + ":" + port);
         } catch (Exception e) {
