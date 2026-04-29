@@ -86,15 +86,16 @@ jobs:
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
           sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
 
-          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
+          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.2.3"\n}\n' >> $BFILE
+
 
           # Add Linphone Maven repository - insert after google() in settings.gradle
           SETTINGS=$APP/android/settings.gradle
           sed -i "s|google()|google()\n        maven { url 'https://linphone.org/maven_repository' }|g" $SETTINGS
           echo "=== Linphone repo check ==="
-          grep -n "linphone" $SETTINGS && echo "OK" || echo "Not found in settings.gradle"
-          # Also add to root build.gradle as fallback
-          printf '\nallprojects {\n  repositories {\n    maven { url "https://linphone.org/maven_repository" }\n  }\n}\n' >> $APP/android/build.gradle
+          grep -n "linphone" $SETTINGS && echo "OK: Linphone in settings.gradle" || echo "ERROR: Not found"
+          echo "=== settings.gradle content ==="
+          cat $SETTINGS
 
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
@@ -104,6 +105,7 @@ jobs:
             'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
             'newArchEnabled=false' \
             'hermesEnabled=true' \
+            'android.dependencyResolutionStrategy=preferProjectRepos' \
             > $APP/android/gradle.properties
 
           printf '%s\n' \
