@@ -88,20 +88,25 @@ jobs:
 
           printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
 
-          # Add Linphone Maven repository to settings.gradle
+          # Fix PREFER_SETTINGS -> PREFER_PROJECT so allprojects repos are used
           SETTINGS=$APP/android/settings.gradle
-          # Add after google() AND after mavenCentral() for reliability
-          sed -i "s|google()|google()\n        maven { url 'https://download.linphone.org/releases/maven_repository' }|g" $SETTINGS
-          echo "=== Linphone repo check ==="
-          grep -n "linphone" $SETTINGS && echo "OK: Linphone in settings.gradle" || echo "ERROR: Not found"
-          # Write settings.gradle to step summary (publicly visible)
+          sed -i 's/RepositoriesMode\.PREFER_SETTINGS/RepositoriesMode.PREFER_PROJECT/g' $SETTINGS
+          echo "=== RepositoriesMode check ==="
+          grep 'RepositoriesMode' $SETTINGS || echo 'No PREFER_SETTINGS (OK)'
+
+          # Add Linphone repo to TOP-LEVEL android/build.gradle allprojects block
+          ROOT_BUILD=$APP/android/build.gradle
+          printf '\nallprojects {\n    repositories {\n        maven { url "https://download.linphone.org/releases/maven_repository" }\n    }\n}\n' >> $ROOT_BUILD
+          echo "=== Linphone in root build.gradle ==="
+          grep -n 'linphone' $ROOT_BUILD && echo 'OK: Linphone in root build.gradle' || echo 'ERROR: Not found'
+          # Write diagnostics to step summary
           echo '## settings.gradle after patch' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat $SETTINGS >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '## app/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
+          echo '## root android/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          cat $BFILE >> $GITHUB_STEP_SUMMARY
+          cat $ROOT_BUILD >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
