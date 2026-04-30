@@ -40,6 +40,7 @@ export default function App() {
   const [bridgeExtension, setBridgeExtension] = useState('1001');
   const [answerRings, setAnswerRings] = useState('1');
   const [status, setStatus] = useState('Not configured');
+  const [running, setRunning] = useState(false);
 
   const saveAndStart = async () => {
     try {
@@ -52,9 +53,21 @@ export default function App() {
         answerRings: parseInt(answerRings, 10) || 1,
       });
       setStatus('Running');
+      setRunning(true);
       Alert.alert('Success', result);
     } catch (e) {
       setStatus('Error: ' + e.message);
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const stopGateway = async () => {
+    try {
+      const result = await SipBridge.stopService();
+      setStatus('Stopped');
+      setRunning(false);
+      Alert.alert('Stopped', result);
+    } catch (e) {
       Alert.alert('Error', e.message);
     }
   };
@@ -107,6 +120,11 @@ export default function App() {
       <TouchableOpacity style={styles.btn} onPress={saveAndStart}>
         <Text style={styles.btnText}>Save &amp; Start Gateway</Text>
       </TouchableOpacity>
+      {running && (
+        <TouchableOpacity style={styles.btnStop} onPress={stopGateway}>
+          <Text style={styles.btnText}>Stop Service</Text>
+        </TouchableOpacity>
+      )}
       <View style={styles.howto}>
         <Text style={styles.howtoTitle}>How it works</Text>
         <Text style={styles.howtoItem}>1. Incoming call arrives on SIM</Text>
@@ -127,7 +145,8 @@ const styles = StyleSheet.create({
   field: {marginBottom: 14},
   label: {color: '#aaa', marginBottom: 5, fontSize: 12},
   input: {backgroundColor: '#1e1e1e', color: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a'},
-  btn: {backgroundColor: '#2563eb', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 8, marginBottom: 24},
+  btn: {backgroundColor: '#2563eb', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 8, marginBottom: 8},
+  btnStop: {backgroundColor: '#dc2626', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 4, marginBottom: 24},
   btnText: {color: '#fff', fontSize: 15, fontWeight: '700'},
   howto: {backgroundColor: '#111827', padding: 16, borderRadius: 10, marginBottom: 40},
   howtoTitle: {color: '#fff', fontWeight: '600', marginBottom: 10},

@@ -7,6 +7,16 @@ public class SipBridgeModule extends ReactContextBaseJavaModule {
     @Override public String getName() { return "SipBridge"; }
 
     @ReactMethod
+    public void stopService(Promise promise) {
+        try {
+            Intent i = new Intent(getReactApplicationContext(), GsmSipBridgeService.class);
+            i.setAction("ACTION_STOP");
+            getReactApplicationContext().startService(i);
+            promise.resolve("Service stopped");
+        } catch (Exception e) { promise.reject("ERROR", e.getMessage()); }
+    }
+
+    @ReactMethod
     public void saveConfig(ReadableMap cfg, Promise promise) {
         try {
             SharedPreferences.Editor p = getReactApplicationContext()

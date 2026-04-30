@@ -91,6 +91,10 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
                 case "ACTION_RELOAD":
                     reload();
                     break;
+                case "ACTION_STOP":
+                    Log.d(TAG, "Stop requested");
+                    stopSelf();
+                    return START_NOT_STICKY;
             }
         }
         return START_STICKY;
@@ -245,9 +249,10 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
     @Override public void onDestroy() {
         handler.removeCallbacks(answerRunnable);
         handler.removeCallbacks(bridgeRunnable);
+        if (sip != null) { sip.hangup(); sip.destroy(); sip = null; }
         resetAudio();
+        stopForeground(true);
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
-        if (sip != null) sip.destroy();
         super.onDestroy();
     }
 }
