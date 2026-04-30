@@ -99,23 +99,10 @@ jobs:
           echo "=== RepositoriesMode check ==="
           grep 'RepositoriesMode' $SETTINGS || echo 'No PREFER_SETTINGS (OK)'
 
-          # Also inject Linphone repo into settings.gradle dependencyResolutionManagement block
-          # (safe fallback for both PREFER_SETTINGS and PREFER_PROJECT modes)
-          python3 -c "
-import re, sys
-with open('$SETTINGS', 'r') as f:
-    content = f.read()
-linphone_repos = '\n        maven { url \"https://linphone.org/maven_repository/\" }\n        maven { url \"https://download.linphone.org/maven_repository/\" }'
-# Insert after google() inside dependencyResolutionManagement.repositories
-content = re.sub(
-    r'(dependencyResolutionManagement\s*\{.*?repositories\s*\{.*?google\(\))',
-    r'\1' + linphone_repos,
-    content, flags=re.DOTALL, count=1
-)
-with open('$SETTINGS', 'w') as f:
-    f.write(content)
-print('settings.gradle patched OK')
-" || echo "Python patch skipped (no dependencyResolutionManagement block)"
+          # Also inject Linphone repo into settings.gradle after google() in repositories block
+          sed -i '/google()/a\        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }' $SETTINGS || echo "sed patch skipped"
+          echo "=== settings.gradle after Linphone inject ==="
+          grep -A2 'maven.*linphone' $SETTINGS || echo "Linphone not yet in settings.gradle (allprojects fallback active)"
 
           # Add Linphone repo to TOP-LEVEL android/build.gradle allprojects block
           ROOT_BUILD=$APP/android/build.gradle
