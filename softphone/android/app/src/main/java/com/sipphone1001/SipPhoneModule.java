@@ -208,17 +208,41 @@ public class SipPhoneModule extends ReactContextBaseJavaModule {
             ensureCore();
             if (toUser == null || toUser.trim().isEmpty()) throw new Exception("Empty recipient");
             if (text == null || text.trim().isEmpty()) throw new Exception("Empty message");
-            Address peer = Factory.instance().createAddress("sip:" + toUser.trim() + "@" + host);
+            if (!registered || host == null || host.trim().isEmpty()) throw new Exception("Not logged in to SIP account");
+
+            String cleanTo = toUser.trim();
+            String uri = cleanTo.startsWith("sip:") ? cleanTo
+                    : cleanTo.contains("@") ? "sip:" + cleanTo
+                    : "sip:" + cleanTo + "@" + host + ":" + port;
+
+            Address peer = Factory.instance().createAddress(uri);
             if (peer == null) throw new Exception("Invalid peer address");
+
             Object room;
             try {
                 Method m = core.getClass().getMethod("getChatRoom", Address.class);
                 room = m.invoke(core, peer);
             } catch (Exception ex) {
-                Method m = core.getClass().getMethod("getOrCreateBasicChatRoom", Address.class);
-                room = m.invoke(core, peer);
+                room = null;
+            }
+            if (room == null) {
+                try {
+                    Method m = core.getClass().getMethod("getOrCreateBasicChatRoom", Address.class);
+                    room = m.invoke(core, peer);
+                } catch (Exception ignored) {
+                    room = null;
+                }
+            }
+            if (room == null) {
+                try {
+                    Method m = core.getClass().getMethod("getChatRoomFromUri", String.class);
+                    room = m.invoke(core, uri);
+                } catch (Exception ignored) {
+                    room = null;
+                }
             }
             if (room == null) throw new Exception("Unable to get chat room");
+
             Object message;
             try {
                 Method m = room.getClass().getMethod("createMessageFromUtf8", String.class);
@@ -227,12 +251,17 @@ public class SipPhoneModule extends ReactContextBaseJavaModule {
                 Method m = room.getClass().getMethod("createMessage", String.class);
                 message = m.invoke(room, text.trim());
             }
-            Method send = message.getClass().getMethod("send");
-            send.invoke(message);
+            try {
+                Method sendChatMessage = room.getClass().getMethod("sendChatMessage", message.getClass());
+                sendChatMessage.invoke(room, message);
+            } catch (NoSuchMethodException ex) {
+                Method send = message.getClass().getMethod("send");
+                send.invoke(message);
+            }
 
             WritableMap map = Arguments.createMap();
             map.putString("from", username);
-            map.putString("to", toUser.trim());
+            map.putString("to", cleanTo);
             map.putString("text", text.trim());
             emit("SipPhoneMessageSent", map);
             promise.resolve("Message sent");

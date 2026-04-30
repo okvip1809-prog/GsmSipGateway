@@ -1,4 +1,4 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {
   Alert, DeviceEventEmitter, NativeModules, PermissionsAndroid,
   ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View,
@@ -6,10 +6,12 @@ import {
 
 const {SipPhone} = NativeModules;
 
-const DEFAULT_HOST = '103.82.193.58';
-const DEFAULT_PORT = 5060;
-const DEFAULT_USER = '1001';
-const DEFAULT_PASS = 'AppVoip-2026!';
+const DEFAULT_ACCOUNT = {
+  host: '103.82.193.58',
+  port: '5060',
+  username: '1001',
+  password: 'AppVoip-2026!',
+};
 
 const DIAL_KEYS = [
   ['1','2','3'],
@@ -19,7 +21,7 @@ const DIAL_KEYS = [
 ];
 
 export default function App() {
-  const [tab, setTab] = useState('dial'); // 'dial' | 'messages' | 'log'
+  const [tab, setTab] = useState('dial'); // 'dial' | 'messages' | 'log' | 'account'
   const [regState, setRegState] = useState('Unregistered');
   const [registered, setRegistered] = useState(false);
   const [inCall, setInCall] = useState(false);
@@ -31,6 +33,7 @@ export default function App() {
   const [messages, setMessages] = useState([]); // [{from, text, mine, ts}]
   const [callLog, setCallLog] = useState([]);   // [{type, from, ts}]
   const [log, setLog] = useState([]);
+  const [account, setAccount] = useState(DEFAULT_ACCOUNT);
 
   const addLog = msg => setLog(l => [{ts: new Date().toLocaleTimeString(), msg}, ...l].slice(0, 100));
 
@@ -78,16 +81,35 @@ export default function App() {
         if (tab !== 'messages') addLog('Message from ' + from + ': ' + text);
       }),
       DeviceEventEmitter.addListener('SipPhoneMessageSent', ev => {
-        setMessages(m => [...m, {from: 'Me→' + ev.to, text: ev.text, mine: true, ts: new Date().toLocaleTimeString()}]);
+        const to = ev.to || '';
+        setMessages(m => [...m, {from: 'Me->' + to, text: ev.text, mine: true, ts: new Date().toLocaleTimeString()}]);
       }),
     ];
     return () => subs.forEach(s => s.remove());
   }, [tab]);
 
+  const updateAccountField = (field, value) => {
+    setAccount(prev => ({...prev, [field]: value}));
+  };
+
   const onRegister = async () => {
     try {
+      const host = (account.host || '').trim();
+      const username = (account.username || '').trim();
+      const password = (account.password || '').trim();
+      const parsedPort = parseInt((account.port || '').trim(), 10);
+
+      if (!host || !username || !password) {
+        Alert.alert('Missing account info', 'Please fill host, username and password in Account tab.');
+        return;
+      }
+      if (!Number.isInteger(parsedPort) || parsedPort <= 0) {
+        Alert.alert('Invalid port', 'Please enter a valid SIP port.');
+        return;
+      }
+
       addLog('Registering...');
-      const msg = await SipPhone.register(DEFAULT_HOST, DEFAULT_PORT, DEFAULT_USER, DEFAULT_PASS);
+      const msg = await SipPhone.register(host, parsedPort, username, password);
       addLog(msg);
     } catch (e) { addLog('Register error: ' + e.message); Alert.alert('Error', e.message); }
   };
@@ -146,10 +168,13 @@ export default function App() {
           <View style={[s.dot, {backgroundColor: regColor}]} />
           <Text style={[s.regText, {color: regColor}]}>{regState}</Text>
         </View>
+        <Text style={s.accountSummary}>
+          {account.username || '?'}@{account.host || '?'}:{account.port || '5060'}
+        </Text>
         <View style={s.regBtns}>
           {!registered
-            ? <TouchableOpacity style={s.btnSmall} onPress={onRegister}><Text style={s.btnSmallTxt}>Register</Text></TouchableOpacity>
-            : <TouchableOpacity style={[s.btnSmall, s.btnSmallRed]} onPress={onUnregister}><Text style={s.btnSmallTxt}>Unregister</Text></TouchableOpacity>
+            ? <TouchableOpacity style={s.btnSmall} onPress={onRegister}><Text style={s.btnSmallTxt}>Login</Text></TouchableOpacity>
+            : <TouchableOpacity style={[s.btnSmall, s.btnSmallRed]} onPress={onUnregister}><Text style={s.btnSmallTxt}>Logout</Text></TouchableOpacity>
           }
         </View>
       </View>
@@ -171,10 +196,10 @@ export default function App() {
 
       {/* Tabs */}
       <View style={s.tabs}>
-        {['dial','messages','log'].map(t => (
+        {['dial','messages','log','account'].map(t => (
           <TouchableOpacity key={t} style={[s.tab, tab === t && s.tabActive]} onPress={() => setTab(t)}>
             <Text style={[s.tabTxt, tab === t && s.tabTxtActive]}>
-              {t === 'dial' ? 'Dial' : t === 'messages' ? 'Messages' : 'Log'}
+              {t === 'dial' ? 'Dial' : t === 'messages' ? 'Messages' : t === 'log' ? 'Log' : 'Account'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -272,6 +297,65 @@ export default function App() {
           ))}
         </ScrollView>
       )}
+
+      {tab === 'account' && (
+        <ScrollView style={s.accountPane} contentContainerStyle={s.accountPaneContent}>
+          <Text style={s.accountTitle}>Login account configuration</Text>
+          <Text style={s.accountHelp}>Update SIP account then tap Login in header.</Text>
+
+          <Text style={s.accountLabel}>SIP Host</Text>
+          <TextInput
+            style={s.accountInput}
+            value={account.host}
+            onChangeText={v => updateAccountField('host', v)}
+            placeholder="e.g. 103.82.193.58"
+            placeholderTextColor="#555"
+            autoCapitalize="none"
+          />
+
+          <Text style={s.accountLabel}>SIP Port</Text>
+          <TextInput
+            style={s.accountInput}
+            value={account.port}
+            onChangeText={v => updateAccountField('port', v.replace(/[^0-9]/g, ''))}
+            placeholder="5060"
+            placeholderTextColor="#555"
+            keyboardType="number-pad"
+          />
+
+          <Text style={s.accountLabel}>Username / Extension</Text>
+          <TextInput
+            style={s.accountInput}
+            value={account.username}
+            onChangeText={v => updateAccountField('username', v)}
+            placeholder="1001"
+            placeholderTextColor="#555"
+            autoCapitalize="none"
+          />
+
+          <Text style={s.accountLabel}>Password</Text>
+          <TextInput
+            style={s.accountInput}
+            value={account.password}
+            onChangeText={v => updateAccountField('password', v)}
+            placeholder="SIP password"
+            placeholderTextColor="#555"
+            secureTextEntry
+            autoCapitalize="none"
+          />
+
+          <View style={s.accountActionRow}>
+            <TouchableOpacity
+              style={s.btnSmall}
+              onPress={() => {
+                setAccount(DEFAULT_ACCOUNT);
+                addLog('Account reset to default values');
+              }}>
+              <Text style={s.btnSmallTxt}>Reset Default</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -283,6 +367,7 @@ const s = StyleSheet.create({
   regRow: {flexDirection: 'row', alignItems: 'center', marginBottom: 8},
   dot: {width: 8, height: 8, borderRadius: 4, marginRight: 6},
   regText: {fontSize: 13},
+  accountSummary: {color: '#93c5fd', fontSize: 12, marginBottom: 8},
   regBtns: {flexDirection: 'row', gap: 8},
   btnSmall: {backgroundColor: '#2563eb', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 6},
   btnSmallRed: {backgroundColor: '#7f1d1d'},
@@ -334,4 +419,12 @@ const s = StyleSheet.create({
   logPane: {flex: 1, padding: 12},
   logEmpty: {color: '#555', textAlign: 'center', marginTop: 40},
   logItem: {color: '#6b7280', fontSize: 11, marginBottom: 4, fontFamily: 'monospace'},
+  // Account
+  accountPane: {flex: 1, paddingHorizontal: 12},
+  accountPaneContent: {paddingVertical: 16, paddingBottom: 28},
+  accountTitle: {color: '#fff', fontSize: 16, fontWeight: '700', marginBottom: 6},
+  accountHelp: {color: '#9ca3af', fontSize: 12, marginBottom: 14},
+  accountLabel: {color: '#d1d5db', fontSize: 12, marginBottom: 6, marginTop: 6},
+  accountInput: {backgroundColor: '#1e1e1e', color: '#fff', padding: 10, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a'},
+  accountActionRow: {flexDirection: 'row', marginTop: 16},
 });
