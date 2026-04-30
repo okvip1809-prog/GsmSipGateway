@@ -3,10 +3,12 @@ package com.gsmsipgateway;
 import android.app.*;
 import android.media.AudioManager;
 import android.content.*;
+import android.net.Uri;
 import android.os.*;
 import android.telecom.TelecomManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+import org.linphone.core.Call;
 
 
 public class GsmSipBridgeService extends Service implements LinphoneEngine.BridgeCallback {
@@ -154,10 +156,46 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         }, delayMs);
     }
 
+    /**
+     * Asterisk gọi vào Android (3001) để yêu cầu gọi GSM ra ngoài (VD: 1001 bấm 0351234567)
+     * Đối với luồng này:
+     *   1001 -> Asterisk -> INVITE sip:0351234567@android -> app (3001) -> GSM 0351234567
+     */
+    @Override
+    public void onSipIncomingCall(Call incomingCall, String dialedNumber) {
+        Log.d(TAG, "Incoming SIP from Asterisk - outbound GSM to: " + dialedNumber);
+        if (dialedNumber == null || dialedNumber.trim().isEmpty()) {
+            Log.e(TAG, "onSipIncomingCall: no number, ignoring");
+            return;
+        }
+        // Trả lời cuộc gọi SIP từ Asterisk
+        if (sip != null) sip.answerIncomingCall(incomingCall);
+        // Gọi GSM ra ngoài
+        updateNote("Outbound GSM: " + dialedNumber);
+        prepareAudio();
+        try {
+            Intent intent = new Intent(Intent.ACTION_CALL);
+            intent.setData(Uri.parse("tel:" + dialedNumber.trim()));
+            intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            startActivity(intent);
+            Log.d(TAG, "GSM outbound call initiated: " + dialedNumber);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to initiate GSM outbound call: " + e.getMessage());
+        }
+    }
+
     @Override public void onSipCallConnected() { updateNote("Bridge Active"); }
+
     @Override public void onSipCallEnded() {
         bridgeInProgress = false;
         bridgeAttempts = 0;
+        // Kết thúc cuộc gọi GSM nếu đang hoạt động (dùng cho luồng gọi ra GSM)
+        try {
+            TelecomManager tm = getSystemService(TelecomManager.class);
+            if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                tm.endCall();
+            }
+        } catch (Exception ignored) {}
         resetAudio();
         updateNote("Ready - Waiting...");
     }

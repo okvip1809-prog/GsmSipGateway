@@ -1,0 +1,9 @@
+{
+    "chat.agent.enabled": true,
+    "chat.agent.maxRequests": 50,
+    "chat.agent.networkFilter": true,
+    "chat.checkpoints.showFileChanges": true,
+    "chat.editing.autoAcceptDelay": 100,
+    "chat.agent.sandbox.enabled": "on",
+    "chat.agent.thinkingStyle": "collapsedPreview"
+}

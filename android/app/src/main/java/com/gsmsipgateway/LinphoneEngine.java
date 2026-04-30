@@ -17,6 +17,7 @@ import org.linphone.core.Factory;
 import org.linphone.core.MediaEncryption;
 import org.linphone.core.Reason;
 import org.linphone.core.RegistrationState;
+import org.linphone.core.TransportType;
 
 /**
  * SIP Engine using Linphone SDK 5.x
@@ -39,18 +40,34 @@ public class LinphoneEngine {
         void onSipRegistrationFailed(int errorCode, String errorMessage);
         void onSipCallConnected();
         void onSipCallEnded();
+        /** Gọi khi Asterisk gọi vào app (3001) yêu cầu gọi GSM ra ngoài */
+        void onSipIncomingCall(Call call, String dialedNumber);
     }
 
     public static String sipErrorName(int code) {
         switch (code) {
-            case 0:  return "NO_ERROR";
-            case 1:  return "NETWORK_ERROR";
-            case 2:  return "INVALID_CREDENTIALS";
-            case 3:  return "SERVER_ERROR";
-            case 4:  return "IN_PROGRESS";
-            case 5:  return "TIME_OUT (NAT?)";
-            case 6:  return "CROSS_DOMAIN_AUTH";
-            case 7:  return "CLIENT_ERROR";
+            case 0:  return "NONE";
+            case 1:  return "NO_RESPONSE (network/unreachable)";
+            case 2:  return "FORBIDDEN (403 - wrong credentials/IP denied)";
+            case 3:  return "DECLINED (603)";
+            case 4:  return "NOT_FOUND (404)";
+            case 5:  return "NOT_ANSWERED";
+            case 6:  return "BUSY (486)";
+            case 7:  return "UNSUPPORTED_CONTENT";
+            case 8:  return "BAD_EVENT";
+            case 9:  return "IO_ERROR";
+            case 10: return "DO_NOT_DISTURB";
+            case 11: return "UNAUTHORIZED (401 - wrong password)";
+            case 12: return "NOT_ACCEPTABLE (406)";
+            case 13: return "NO_MATCH";
+            case 14: return "MOVED_PERMANENTLY (301)";
+            case 15: return "GONE (410)";
+            case 16: return "TEMPORARILY_UNAVAILABLE (480)";
+            case 17: return "ADDRESS_INCOMPLETE (484)";
+            case 18: return "NOT_IMPLEMENTED (501)";
+            case 19: return "BAD_GATEWAY (502)";
+            case 20: return "SESSION_INTERVAL_TOO_SMALL";
+            case 21: return "SERVER_TIMEOUT (504 - NAT/firewall?)";
             default: return "UNKNOWN(" + code + ")";
         }
     }
@@ -97,6 +114,26 @@ public class LinphoneEngine {
             public void onCallStateChanged(Core core, Call call, Call.State state, String message) {
                 Log.d(TAG, "Call state: " + state + " | " + message);
                 switch (state) {
+                    case IncomingReceived:
+                        currentCall = call;
+                        // Lấy số điện thoại cần gọi GSM từ To-header của INVITE
+                        String dialedNumber = "";
+                        try {
+                            Address toAddr = call.getToAddress();
+                            if (toAddr != null) dialedNumber = toAddr.getUsername();
+                        } catch (Exception e) {
+                            Log.w(TAG, "getToAddress failed, fallback to remote: " + e.getMessage());
+                        }
+                        if (dialedNumber == null || dialedNumber.isEmpty()) {
+                            dialedNumber = call.getRemoteAddress().getUsername();
+                        }
+                        if (dialedNumber == null) dialedNumber = "";
+                        final String finalNum = dialedNumber;
+                        final Call finalCall = call;
+                        mainHandler.post(() -> {
+                            if (callback != null) callback.onSipIncomingCall(finalCall, finalNum);
+                        });
+                        break;
                     case Connected:
                     case StreamsRunning:
                         currentCall = call;
@@ -150,14 +187,16 @@ public class LinphoneEngine {
             if (identity == null) throw new Exception("Invalid identity address");
             params.setIdentityAddress(identity);
 
-            // Server: sip:host:port;transport=udp
+            // Server address with explicit UDP transport
             Address serverAddr = Factory.instance()
-                    .createAddress("sip:" + host + ":" + port + ";transport=udp");
+                    .createAddress("sip:" + host + ":" + port);
             if (serverAddr == null) throw new Exception("Invalid server address");
+            serverAddr.setTransport(TransportType.Udp);
             params.setServerAddress(serverAddr);
+            params.setOutboundProxyEnabled(true);
 
             params.setRegisterEnabled(true);
-            params.setExpires(60);
+            params.setExpires(3600);
             params.setPublishEnabled(false);
 
             Account account = core.createAccount(params);
@@ -207,6 +246,25 @@ public class LinphoneEngine {
             return call != null;
         } catch (Exception e) {
             Log.e(TAG, "callSip error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Trả lời incoming SIP call (từ Asterisk yêu cầu gọi GSM ra) */
+    public boolean answerIncomingCall(Call call) {
+        if (core == null || call == null) return false;
+        try {
+            CallParams params = core.createCallParams(call);
+            if (params != null) {
+                params.setMediaEncryption(MediaEncryption.None);
+                call.acceptWithParams(params);
+            } else {
+                call.accept();
+            }
+            Log.d(TAG, "Answered incoming SIP call");
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "answerIncomingCall failed: " + e.getMessage());
             return false;
         }
     }

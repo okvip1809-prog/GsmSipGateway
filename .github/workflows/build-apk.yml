@@ -84,7 +84,12 @@ jobs:
           sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
 
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
-          sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
+          # Replace debug signingConfig in release block if present; otherwise inject it
+          if grep -q 'signingConfig signingConfigs\.debug' $BFILE; then
+            sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
+          else
+            sed -i '/release {/a\            signingConfig signingConfigs.release' $BFILE
+          fi
 
           printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
 
@@ -94,9 +99,27 @@ jobs:
           echo "=== RepositoriesMode check ==="
           grep 'RepositoriesMode' $SETTINGS || echo 'No PREFER_SETTINGS (OK)'
 
+          # Also inject Linphone repo into settings.gradle dependencyResolutionManagement block
+          # (safe fallback for both PREFER_SETTINGS and PREFER_PROJECT modes)
+          python3 -c "
+import re, sys
+with open('$SETTINGS', 'r') as f:
+    content = f.read()
+linphone_repos = '\n        maven { url \"https://linphone.org/maven_repository/\" }\n        maven { url \"https://download.linphone.org/maven_repository/\" }'
+# Insert after google() inside dependencyResolutionManagement.repositories
+content = re.sub(
+    r'(dependencyResolutionManagement\s*\{.*?repositories\s*\{.*?google\(\))',
+    r'\1' + linphone_repos,
+    content, flags=re.DOTALL, count=1
+)
+with open('$SETTINGS', 'w') as f:
+    f.write(content)
+print('settings.gradle patched OK')
+" || echo "Python patch skipped (no dependencyResolutionManagement block)"
+
           # Add Linphone repo to TOP-LEVEL android/build.gradle allprojects block
           ROOT_BUILD=$APP/android/build.gradle
-          printf '\nallprojects {\n    repositories {\n        maven { url "https://download.linphone.org/releases/maven_repository" }\n    }\n}\n' >> $ROOT_BUILD
+          printf '\nallprojects {\n    repositories {\n        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }\n    }\n}\n' >> $ROOT_BUILD
           echo "=== Linphone in root build.gradle ==="
           grep -n 'linphone' $ROOT_BUILD && echo 'OK: Linphone in root build.gradle' || echo 'ERROR: Not found'
 
