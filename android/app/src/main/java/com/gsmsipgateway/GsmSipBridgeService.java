@@ -52,6 +52,10 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         user = p.getString("username", "3001");
         pass = p.getString("password", "");
         ext  = p.getString("bridge_ext", "1001");
+        host = host != null ? host.trim() : "";
+        user = user != null ? user.trim() : "";
+        pass = pass != null ? pass.trim() : "";
+        ext = ext != null ? ext.trim() : "1001";
         answerRings = Math.max(1, p.getInt("answer_rings", 1));
         isSipRegistered = false;
         bridgeInProgress = false;
@@ -60,6 +64,16 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         handler.removeCallbacks(answerRunnable);
         handler.removeCallbacks(bridgeRunnable);
         if (sip != null) sip.destroy();
+
+        if (host == null || host.trim().isEmpty()
+                || user == null || user.trim().isEmpty()
+                || pass == null || pass.trim().isEmpty()) {
+            sip = null;
+            updateNote("SIP config missing (host/user/password)");
+            Log.w(TAG, "Skip SIP register: incomplete config");
+            return;
+        }
+
         sip = new LinphoneEngine(this, this);
         sip.register(host, port, user, pass);
         updateNote("Registering SIP " + user + "@" + host + ":" + port + "...");

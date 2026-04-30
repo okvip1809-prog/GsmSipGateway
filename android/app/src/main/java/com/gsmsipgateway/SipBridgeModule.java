@@ -10,9 +10,8 @@ public class SipBridgeModule extends ReactContextBaseJavaModule {
     public void stopService(Promise promise) {
         try {
             Intent i = new Intent(getReactApplicationContext(), GsmSipBridgeService.class);
-            i.setAction("ACTION_STOP");
-            getReactApplicationContext().startService(i);
-            promise.resolve("Service stopped");
+            boolean stopped = getReactApplicationContext().stopService(i);
+            promise.resolve(stopped ? "Service stopped" : "Service was not running");
         } catch (Exception e) { promise.reject("ERROR", e.getMessage()); }
     }
 

@@ -1,6 +1,7 @@
 package com.gsmsipgateway;
 import android.Manifest;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import androidx.core.app.ActivityCompat;
 import com.facebook.react.ReactActivity;
@@ -20,7 +21,16 @@ public class MainActivity extends ReactActivity {
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         ActivityCompat.requestPermissions(this, PERMS, 100);
-        startForegroundService(new Intent(this, GsmSipBridgeService.class));
+
+        SharedPreferences prefs = getSharedPreferences("sip_config", MODE_PRIVATE);
+        String host = prefs.getString("host", "");
+        String user = prefs.getString("username", "");
+        String pass = prefs.getString("password", "");
+        if (host != null && !host.trim().isEmpty()
+                && user != null && !user.trim().isEmpty()
+                && pass != null && !pass.trim().isEmpty()) {
+            startForegroundService(new Intent(this, GsmSipBridgeService.class));
+        }
     }
     @Override protected ReactActivityDelegate createReactActivityDelegate() {
         return new DefaultReactActivityDelegate(this, getMainComponentName(),

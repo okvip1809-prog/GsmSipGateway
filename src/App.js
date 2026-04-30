@@ -48,7 +48,7 @@ export default function App() {
         host: host.trim(),
         port: parseInt(port, 10) || 5060,
         username: username.trim(),
-        password,
+        password: password.trim(),
         bridgeExtension: bridgeExtension.trim(),
         answerRings: parseInt(answerRings, 10) || 1,
       });
