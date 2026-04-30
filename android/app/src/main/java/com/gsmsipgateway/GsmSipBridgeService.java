@@ -3,6 +3,10 @@ package com.gsmsipgateway;
 import android.app.*;
 import android.media.AudioManager;
 import android.content.*;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.net.Uri;
 import android.os.*;
 import android.telecom.TelecomManager;
@@ -22,12 +26,14 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
     private boolean bridgeInProgress = false;
     private int bridgeAttempts = 0;
     private int sipRetryCount = 0;
-    private static final int MAX_SIP_RETRIES = 5;
+    private static final int MAX_SIP_RETRIES = Integer.MAX_VALUE; // never give up
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Runnable bridgeRunnable = this::bridgeToExtension;
     private final Runnable answerRunnable = this::answerAndBridge;
+    private final Runnable reRegisterRunnable = this::reload;
     private AudioManager audioManager;
     private PowerManager.WakeLock wakeLock;
+    private ConnectivityManager.NetworkCallback networkCallback;
 
 
     @Override
@@ -42,7 +48,25 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
             wakeLock.acquire(10 * 60 * 1000L);
         }
         startForeground(1, note("Initializing..."));
+        registerNetworkCallback();
         reload();
+    }
+
+    private void registerNetworkCallback() {
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm == null) return;
+        NetworkRequest req = new NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build();
+        networkCallback = new ConnectivityManager.NetworkCallback() {
+            @Override
+            public void onAvailable(Network network) {
+                Log.d(TAG, "Network available - scheduling SIP re-register");
+                handler.removeCallbacks(reRegisterRunnable);
+                handler.postDelayed(reRegisterRunnable, 2000);
+            }
+        };
+        try { cm.registerNetworkCallback(req, networkCallback); }
+        catch (Exception e) { Log.e(TAG, "registerNetworkCallback failed: " + e.getMessage()); }
     }
 
     private void reload() {
@@ -159,11 +183,8 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         isSipRegistered = false;
         sipRetryCount++;
         Log.e(TAG, "SIP Registration failed | code=" + errorCode + " | " + errorMessage + " | attempt=" + sipRetryCount);
-        if (sipRetryCount > MAX_SIP_RETRIES) {
-            Log.e(TAG, "Giving up after " + MAX_SIP_RETRIES + " attempts.");
-            updateNote("[FAILED] Reg [" + LinphoneEngine.sipErrorName(errorCode) + "] - Check server/credentials");
-            return;
-        }
+        // No hard limit — always retry with exponential back-off (cap 60s)
+        if (sipRetryCount > 10) sipRetryCount = 10; // cap for delay calculation only
         long delayMs = Math.min(5000L * (1L << (sipRetryCount - 1)), 60000L);
         updateNote("Reg failed [" + LinphoneEngine.sipErrorName(errorCode) + "] retry " + sipRetryCount + "/" + MAX_SIP_RETRIES + " in " + (delayMs/1000) + "s");
         handler.postDelayed(() -> {
@@ -263,6 +284,11 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
     @Override public void onDestroy() {
         handler.removeCallbacks(answerRunnable);
         handler.removeCallbacks(bridgeRunnable);
+        handler.removeCallbacks(reRegisterRunnable);
+        ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+        if (cm != null && networkCallback != null) {
+            try { cm.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
+        }
         if (sip != null) { sip.hangup(); sip.destroy(); sip = null; }
         resetAudio();
         stopForeground(true);
