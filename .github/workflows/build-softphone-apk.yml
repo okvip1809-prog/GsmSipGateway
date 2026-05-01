@@ -18,7 +18,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - uses: actions/setup-java@v4
         with:
@@ -84,8 +84,10 @@ jobs:
           sed -i 's/namespace \"com\.[a-z]*\"/namespace \"com.sipphone1001\"/' $BFILE
           sed -i 's/applicationId \"com\.[a-z]*\"/applicationId \"com.sipphone1001\"/' $BFILE
 
-          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $BFILE
-          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
+          # Force app minSdk to 26 regardless of template defaults/root ext values.
+          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $BFILE
+          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $BFILE
+          sed -i 's/minSdkVersion rootProject.ext.minSdkVersion/minSdkVersion 26/g' $BFILE
 
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
           if grep -q 'signingConfig signingConfigs\.debug' $BFILE; then
@@ -111,8 +113,8 @@ jobs:
           printf '\nallprojects {\n    repositories {\n        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }\n    }\n}\n' >> $ROOT_BUILD
 
           # Fix minSdkVersion in root build.gradle
-          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
-          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
+          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $ROOT_BUILD
+          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $ROOT_BUILD
 
           # Keep template gradle-wrapper and gradle.properties from RN init to avoid AGP/Gradle mismatch
           # Only enforce the options we need.
@@ -125,6 +127,10 @@ jobs:
 
           echo "=== app/build.gradle ==="
           cat $BFILE
+          echo '## app/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $BFILE >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Generate Keystore
         run: |
@@ -145,6 +151,10 @@ jobs:
           echo '## Gradle Build Output (last 80 lines)' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           tail -80 /tmp/gradle-softphone.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '## Gradle Error Extract' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -nE 'FAILURE:|What went wrong:|Execution failed|Could not resolve|Manifest merger failed|minSdkVersion|A problem occurred|BUILD FAILED' /tmp/gradle-softphone.log | tail -120 >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "=== LAST 80 LINES OF GRADLE LOG ==="
           tail -80 /tmp/gradle-softphone.log

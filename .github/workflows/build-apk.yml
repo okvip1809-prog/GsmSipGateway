@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - uses: actions/setup-java@v4
         with:
@@ -77,8 +77,10 @@ jobs:
           sed -i 's/applicationId \"com\.appproject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
           sed -i 's/namespace \"com\.AppProject\"/namespace \"com.gsmsipgateway\"/' $BFILE
           sed -i 's/applicationId \"com\.AppProject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
-          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $BFILE
-          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
+          # Force app minSdk to 26 regardless of template defaults/root ext values.
+          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $BFILE
+          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $BFILE
+          sed -i 's/minSdkVersion rootProject.ext.minSdkVersion/minSdkVersion 26/g' $BFILE
 
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
           # Replace debug signingConfig in release block if present; otherwise inject it
@@ -111,8 +113,8 @@ jobs:
           grep -n 'linphone' $ROOT_BUILD && echo 'OK: Linphone in root build.gradle' || echo 'ERROR: Not found'
 
           # Fix minSdkVersion in root build.gradle (RN 0.73.x stores it in ext block here)
-          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
-          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
+          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $ROOT_BUILD
+          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $ROOT_BUILD
           echo "=== minSdk in root build.gradle ==="
           grep 'minSdkVersion' $ROOT_BUILD || echo 'minSdkVersion not in root (check app/build.gradle)'
 
@@ -124,6 +126,10 @@ jobs:
           echo '## root android/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           cat $ROOT_BUILD >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '## app/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          cat $BFILE >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
           # Keep template gradle-wrapper and gradle.properties from RN init to avoid AGP/Gradle mismatch
@@ -160,6 +166,10 @@ jobs:
           echo '## Gradle Build Output (last 80 lines)' >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           tail -80 /tmp/gradle.log >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '## Gradle Error Extract' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -nE 'FAILURE:|What went wrong:|Execution failed|Could not resolve|Manifest merger failed|minSdkVersion|A problem occurred|BUILD FAILED' /tmp/gradle.log | tail -120 >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "=== LAST 80 LINES OF GRADLE LOG ==="
           tail -80 /tmp/gradle.log
