@@ -120,11 +120,11 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
         int port = p.getInt("port", 5060);
 
         String user1 = p.getString("username_sim1", "1001");
-        String pass1 = p.getString("password_sim1", "AppVoip-2026!");
+        String pass1 = p.getString("password_sim1", "abc12123");
         sipMgr.configureAccount(SipAccountManager.ACCOUNT_SIM1, host, port, user1, pass1, user1);
 
         String user2 = p.getString("username_sim2", "1002");
-        String pass2 = p.getString("password_sim2", "abc123123");
+        String pass2 = p.getString("password_sim2", "abc12123");
         sipMgr.configureAccount(SipAccountManager.ACCOUNT_SIM2, host, port, user2, pass2, user2);
 
         for (int i = 0; i < 2; i++) {

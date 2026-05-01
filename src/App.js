@@ -34,11 +34,11 @@ export default function App() {
   
   // SIM1 (1001)
   const [username1, setUsername1] = useState('1001');
-  const [password1, setPassword1] = useState('abc123123');
+  const [password1, setPassword1] = useState('abc12123');
   
   // SIM2 (1002)
   const [username2, setUsername2] = useState('1002');
-  const [password2, setPassword2] = useState('abc123123');
+  const [password2, setPassword2] = useState('abc12123');
   
   const [status, setStatus] = useState('Not configured');
   const [running, setRunning] = useState(false);
