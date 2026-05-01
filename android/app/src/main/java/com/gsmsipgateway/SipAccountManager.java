@@ -9,9 +9,13 @@ import org.linphone.core.Call;
 import org.linphone.core.Core;
 import org.linphone.core.CoreListenerStub;
 import org.linphone.core.Factory;
+import org.linphone.core.MediaEncryption;
+import org.linphone.core.PayloadType;
 import org.linphone.core.RegistrationState;
+import org.linphone.core.StreamType;
 import org.linphone.core.TransportType;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -370,21 +374,79 @@ public class SipAccountManager {
                 } catch (Exception e) {
                     Log.w(TAG, "Error getting dialed number: " + e.getMessage());
                 }
+                Log.i(TAG, "[RTP] INCOMING slot=" + simSlot
+                    + " from=" + call.getRemoteAddress().asString()
+                    + " to=" + dialedNumber);
+                logAudioCodecs(call, simSlot, "INVITE");
                 if (callback != null) callback.onIncomingCall(simSlot, call, dialedNumber);
                 break;
             case Connected:
+                sipAcc.currentCall = call;
+                Log.i(TAG, "[RTP] CONNECTED slot=" + simSlot);
+                logAudioCodecs(call, simSlot, "Connected");
+                if (callback != null) callback.onAccountCallConnected(simSlot);
+                break;
             case StreamsRunning:
                 sipAcc.currentCall = call;
+                Log.i(TAG, "[RTP] STREAMS_RUNNING slot=" + simSlot
+                    + " audioDir=" + call.getAudioStats().getIceState());
+                logAudioStats(call, simSlot);
                 if (callback != null) callback.onAccountCallConnected(simSlot);
                 break;
             case End:
             case Released:
             case Error:
+                Log.i(TAG, "[RTP] CALL_END slot=" + simSlot + " reason=" + message);
+                if (call != null) logAudioStats(call, simSlot);
                 sipAcc.currentCall = null;
                 if (callback != null) callback.onAccountCallEnded(simSlot);
                 break;
             default:
                 break;
+        }
+    }
+
+    /** Log codec đã negotiate tại thời điểm SDP */
+    private void logAudioCodecs(Call call, int slot, String phase) {
+        try {
+            org.linphone.core.CallParams currentParams = call.getCurrentParams();
+            if (currentParams == null) {
+                Log.w(TAG, "[RTP] " + phase + " slot=" + slot + " params=null (SDP not yet exchanged)");
+                return;
+            }
+            PayloadType pt = currentParams.getUsedAudioPayloadType();
+            if (pt != null) {
+                Log.i(TAG, "[RTP] " + phase + " slot=" + slot
+                    + " audioCodec=" + pt.getMimeType()
+                    + "/" + pt.getClockRate()
+                    + " enc=" + currentParams.getMediaEncryption());
+            } else {
+                Log.w(TAG, "[RTP] " + phase + " slot=" + slot + " audioCodec=null — no audio stream negotiated");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "[RTP] logAudioCodecs error: " + e.getMessage());
+        }
+    }
+
+    /** Log RTP statistics: jitter, lost packets, ice state */
+    private void logAudioStats(Call call, int slot) {
+        try {
+            org.linphone.core.CallStats stats = call.getAudioStats();
+            if (stats == null) {
+                Log.w(TAG, "[RTP] audioStats=null slot=" + slot);
+                return;
+            }
+            Log.i(TAG, "[RTP] STATS slot=" + slot
+                + " iceState=" + stats.getIceState()
+                + " sndPayload=" + stats.getSenderPayloadType()
+                + " rcvPayload=" + stats.getReceiverPayloadType()
+                + " jitter=" + String.format("%.1f", stats.getJitterBufferSizeMs()) + "ms"
+                + " lostSnd=" + String.format("%.1f%%", stats.getSenderLossRate())
+                + " lostRcv=" + String.format("%.1f%%", stats.getReceiverLossRate())
+                + " localAddr=" + stats.getLocalAddress()
+                + " remoteAddr=" + stats.getRemoteAddress());
+        } catch (Exception e) {
+            Log.w(TAG, "[RTP] logAudioStats error: " + e.getMessage());
         }
     }
 

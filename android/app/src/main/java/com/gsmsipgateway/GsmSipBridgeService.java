@@ -304,13 +304,23 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
             audioManager.setSpeakerphoneOn(false);
-            Log.d(TAG, "Audio mode set to IN_COMMUNICATION");
+            Log.i(TAG, "[AUDIO] prepareAudio:"
+                + " mode=IN_COMMUNICATION"
+                + " speaker=false"
+                + " micMute=" + audioManager.isMicrophoneMute()
+                + " volume=" + audioManager.getStreamVolume(AudioManager.STREAM_VOICE_CALL)
+                + "/" + audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                + " wiredHS=" + audioManager.isWiredHeadsetOn()
+                + " btA2dp=" + audioManager.isBluetoothA2dpOn());
+        } else {
+            Log.e(TAG, "[AUDIO] prepareAudio: audioManager is null — no audio route will be set");
         }
     }
 
     private void resetAudio() {
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_NORMAL);
+            Log.d(TAG, "[AUDIO] resetAudio: mode=NORMAL");
         }
     }
 
