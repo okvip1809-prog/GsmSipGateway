@@ -8,6 +8,9 @@ on:
       - '.github/workflows/build-softphone-apk.yml'
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -18,7 +21,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
 
       - uses: actions/setup-java@v4
         with:
@@ -26,7 +29,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Init React Native project
-        run: npx react-native@0.73.6 init SipPhoneApp --version 0.73.6 --skip-install
+        run: npx --yes react-native@0.73.6 init SipPhoneApp --version 0.73.6 --skip-install
 
       - name: Install dependencies
         run: |
@@ -84,10 +87,8 @@ jobs:
           sed -i 's/namespace \"com\.[a-z]*\"/namespace \"com.sipphone1001\"/' $BFILE
           sed -i 's/applicationId \"com\.[a-z]*\"/applicationId \"com.sipphone1001\"/' $BFILE
 
-          # Force app minSdk to 26 regardless of template defaults/root ext values.
-          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $BFILE
-          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $BFILE
-          sed -i 's/minSdkVersion rootProject.ext.minSdkVersion/minSdkVersion 26/g' $BFILE
+          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $BFILE
+          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
 
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
           if grep -q 'signingConfig signingConfigs\.debug' $BFILE; then
@@ -96,10 +97,7 @@ jobs:
             sed -i '/release {/a\            signingConfig signingConfigs.release' $BFILE
           fi
 
-          # Add required dependencies inside existing dependencies block (avoid duplicate blocks)
-          if ! grep -q 'org.linphone:linphone-sdk-android:5.3.5' $BFILE; then
-            sed -i '/dependencies {/a\    implementation "org.linphone:linphone-sdk-android:5.3.5"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"' $BFILE
-          fi
+          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
 
           # Fix PREFER_SETTINGS -> PREFER_PROJECT
           SETTINGS=$APP/android/settings.gradle
@@ -113,24 +111,30 @@ jobs:
           printf '\nallprojects {\n    repositories {\n        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }\n    }\n}\n' >> $ROOT_BUILD
 
           # Fix minSdkVersion in root build.gradle
-          sed -E -i 's/minSdkVersion\s*=\s*[0-9]+/minSdkVersion = 26/g' $ROOT_BUILD
-          sed -E -i 's/minSdkVersion\s+[0-9]+/minSdkVersion 26/g' $ROOT_BUILD
+          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
+          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
 
-          # Keep template gradle-wrapper and gradle.properties from RN init to avoid AGP/Gradle mismatch
-          # Only enforce the options we need.
-          if ! grep -q '^newArchEnabled=false' $APP/android/gradle.properties; then
-            printf '\nnewArchEnabled=false\n' >> $APP/android/gradle.properties
-          fi
-          if ! grep -q '^hermesEnabled=true' $APP/android/gradle.properties; then
-            printf 'hermesEnabled=true\n' >> $APP/android/gradle.properties
-          fi
+          sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
+
+          printf '%s\n' \
+            'android.useAndroidX=true' \
+            'android.enableJetifier=true' \
+            'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
+            'newArchEnabled=false' \
+            'hermesEnabled=true' \
+            > $APP/android/gradle.properties
+
+          printf '%s\n' \
+            'distributionBase=GRADLE_USER_HOME' \
+            'distributionPath=wrapper/dists' \
+            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip' \
+            'networkTimeout=10000' \
+            'zipStoreBase=GRADLE_USER_HOME' \
+            'zipStorePath=wrapper/dists' \
+            > $APP/android/gradle/wrapper/gradle-wrapper.properties
 
           echo "=== app/build.gradle ==="
           cat $BFILE
-          echo '## app/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat $BFILE >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
 
       - name: Generate Keystore
         run: |
