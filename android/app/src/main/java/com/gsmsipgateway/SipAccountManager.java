@@ -143,8 +143,8 @@ public class SipAccountManager {
                 registerAccount(sipAcc);
             }
 
-            // Ensure Linphone core engine is running so REGISTER/INVITE events are processed.
-            core.start();
+            // core.start() is called once in GsmSipBridgeService.onCreate();
+            // do not call it here to avoid resetting the iterate loop.
         } catch (Exception e) {
             Log.e(TAG, "registerAll failed: " + e.getMessage());
         }

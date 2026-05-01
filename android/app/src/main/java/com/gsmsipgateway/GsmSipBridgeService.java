@@ -40,6 +40,8 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
     private final Runnable[] bridgeRunnables = new Runnable[2];
     private final Runnable[] answerRunnables = new Runnable[2];
     private Runnable reRegisterRunnable;
+    private Runnable iterateRunnable;
+    private static final int CORE_ITERATE_INTERVAL_MS = 20;
 
     @Override
     public void onCreate() {
@@ -57,12 +59,23 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
             Factory factory = Factory.instance();
             factory.setDebugMode(false, TAG);
             core = factory.createCore(null, null, this);
-            Log.d(TAG, "Linphone Core created");
+            core.start();
+            Log.d(TAG, "Linphone Core created and started");
         } catch (Exception e) {
             Log.e(TAG, "Failed to create Linphone Core: " + e.getMessage());
             updateNote("Failed to create SIP engine");
             return;
         }
+
+        // Linphone Core MUST have iterate() called on the main thread regularly
+        // to dispatch SIP callbacks (registration, call state, etc.).
+        iterateRunnable = new Runnable() {
+            @Override public void run() {
+                if (core != null) core.iterate();
+                handler.postDelayed(this, CORE_ITERATE_INTERVAL_MS);
+            }
+        };
+        handler.post(iterateRunnable);
 
         sipMgr = new SipAccountManager(core, this);
 
@@ -107,7 +120,7 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
         int port = p.getInt("port", 5060);
 
         String user1 = p.getString("username_sim1", "1001");
-        String pass1 = p.getString("password_sim1", "abc123123");
+        String pass1 = p.getString("password_sim1", "AppVoip-2026!");
         sipMgr.configureAccount(SipAccountManager.ACCOUNT_SIM1, host, port, user1, pass1, user1);
 
         String user2 = p.getString("username_sim2", "1002");
@@ -349,6 +362,7 @@ public class GsmSipBridgeService extends Service implements SipAccountManager.Du
 
     @Override
     public void onDestroy() {
+        if (iterateRunnable != null) handler.removeCallbacks(iterateRunnable);
         handler.removeCallbacks(reRegisterRunnable);
         for (int i = 0; i < 2; i++) {
             handler.removeCallbacks(answerRunnables[i]);
