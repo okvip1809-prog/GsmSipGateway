@@ -5,9 +5,6 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -91,7 +88,10 @@ jobs:
             sed -i '/release {/a\            signingConfig signingConfigs.release' $BFILE
           fi
 
-          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
+          # Add required dependencies inside existing dependencies block (avoid duplicate blocks)
+          if ! grep -q 'org.linphone:linphone-sdk-android:5.3.5' $BFILE; then
+            sed -i '/dependencies {/a\    implementation "org.linphone:linphone-sdk-android:5.3.5"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"' $BFILE
+          fi
 
           # Fix PREFER_SETTINGS -> PREFER_PROJECT so allprojects repos are used
           SETTINGS=$APP/android/settings.gradle
@@ -99,7 +99,7 @@ jobs:
           echo "=== RepositoriesMode check ==="
           grep 'RepositoriesMode' $SETTINGS || echo 'No PREFER_SETTINGS (OK)'
 
-          # Also inject Linphone repo into settings.gradle after google() in repositories block
+          # Also inject Linphone repo into settings.gradle after google() in repositories blocks
           sed -i '/google()/a\        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }' $SETTINGS || echo "sed patch skipped"
           echo "=== settings.gradle after Linphone inject ==="
           grep -A2 'maven.*linphone' $SETTINGS || echo "Linphone not yet in settings.gradle (allprojects fallback active)"
@@ -126,25 +126,14 @@ jobs:
           cat $ROOT_BUILD >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-          sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
-
-          printf '%s\n' \
-            'android.useAndroidX=true' \
-            'android.enableJetifier=true' \
-            'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
-            'newArchEnabled=false' \
-            'hermesEnabled=true' \
-            > $APP/android/gradle.properties
-
-
-          printf '%s\n' \
-            'distributionBase=GRADLE_USER_HOME' \
-            'distributionPath=wrapper/dists' \
-            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip' \
-            'networkTimeout=10000' \
-            'zipStoreBase=GRADLE_USER_HOME' \
-            'zipStorePath=wrapper/dists' \
-            > $APP/android/gradle/wrapper/gradle-wrapper.properties
+          # Keep template gradle-wrapper and gradle.properties from RN init to avoid AGP/Gradle mismatch
+          # Only enforce the options we need.
+          if ! grep -q '^newArchEnabled=false' $APP/android/gradle.properties; then
+            printf '\nnewArchEnabled=false\n' >> $APP/android/gradle.properties
+          fi
+          if ! grep -q '^hermesEnabled=true' $APP/android/gradle.properties; then
+            printf 'hermesEnabled=true\n' >> $APP/android/gradle.properties
+          fi
 
           echo "=== app/build.gradle ==="
           cat $BFILE

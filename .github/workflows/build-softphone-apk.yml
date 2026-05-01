@@ -8,9 +8,6 @@ on:
       - '.github/workflows/build-softphone-apk.yml'
   workflow_dispatch:
 
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -97,7 +94,10 @@ jobs:
             sed -i '/release {/a\            signingConfig signingConfigs.release' $BFILE
           fi
 
-          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
+          # Add required dependencies inside existing dependencies block (avoid duplicate blocks)
+          if ! grep -q 'org.linphone:linphone-sdk-android:5.3.5' $BFILE; then
+            sed -i '/dependencies {/a\    implementation "org.linphone:linphone-sdk-android:5.3.5"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"' $BFILE
+          fi
 
           # Fix PREFER_SETTINGS -> PREFER_PROJECT
           SETTINGS=$APP/android/settings.gradle
@@ -114,24 +114,14 @@ jobs:
           sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
           sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
 
-          sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
-
-          printf '%s\n' \
-            'android.useAndroidX=true' \
-            'android.enableJetifier=true' \
-            'org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m' \
-            'newArchEnabled=false' \
-            'hermesEnabled=true' \
-            > $APP/android/gradle.properties
-
-          printf '%s\n' \
-            'distributionBase=GRADLE_USER_HOME' \
-            'distributionPath=wrapper/dists' \
-            'distributionUrl=https\://services.gradle.org/distributions/gradle-8.6-bin.zip' \
-            'networkTimeout=10000' \
-            'zipStoreBase=GRADLE_USER_HOME' \
-            'zipStorePath=wrapper/dists' \
-            > $APP/android/gradle/wrapper/gradle-wrapper.properties
+          # Keep template gradle-wrapper and gradle.properties from RN init to avoid AGP/Gradle mismatch
+          # Only enforce the options we need.
+          if ! grep -q '^newArchEnabled=false' $APP/android/gradle.properties; then
+            printf '\nnewArchEnabled=false\n' >> $APP/android/gradle.properties
+          fi
+          if ! grep -q '^hermesEnabled=true' $APP/android/gradle.properties; then
+            printf 'hermesEnabled=true\n' >> $APP/android/gradle.properties
+          fi
 
           echo "=== app/build.gradle ==="
           cat $BFILE
