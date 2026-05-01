@@ -2,6 +2,7 @@ package com.gsmsipgateway;
 
 import android.content.*;
 import android.os.Build;
+import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.util.Log;
@@ -54,17 +55,13 @@ public class GsmCallReceiver extends BroadcastReceiver {
                 }
 
                 // Fallback: Kiểm tra cuộc gọi hiện tại trên mỗi slot
-                TelephonyManager tm = (TelephonyManager) context.getSystemService(Context.TELEPHONY_SERVICE);
-                if (tm == null) return 0;
-
-                // Lấy số SIM slots
                 SubscriptionManager sm = (SubscriptionManager) context.getSystemService(
                     Context.TELEPHONY_SUBSCRIPTION_SERVICE);
                 if (sm != null) {
-                    int[] subIds = sm.getActiveSubscriptionIdList();
-                    if (subIds != null) {
-                        for (int subId : subIds) {
-                            int slot = SubscriptionManager.getSlotIndex(subId);
+                    java.util.List<SubscriptionInfo> activeSubs = sm.getActiveSubscriptionInfoList();
+                    if (activeSubs != null) {
+                        for (SubscriptionInfo subInfo : activeSubs) {
+                            int slot = subInfo.getSimSlotIndex();
                             if (slot >= 0) {
                                 Log.d(TAG, "Active SIM found at slot: " + slot);
                                 // Chọn slot thứ nhất có sẵn
