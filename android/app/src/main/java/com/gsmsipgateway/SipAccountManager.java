@@ -7,6 +7,7 @@ import org.linphone.core.Address;
 import org.linphone.core.AuthInfo;
 import org.linphone.core.Call;
 import org.linphone.core.Core;
+import org.linphone.core.CoreListenerStub;
 import org.linphone.core.Factory;
 import org.linphone.core.RegistrationState;
 import org.linphone.core.TransportType;
@@ -27,6 +28,7 @@ public class SipAccountManager {
     private Core core;
     private Map<Integer, SipAccount> accounts = new HashMap<>();
     private DualSipCallback callback;
+    private CoreListenerStub coreListener;
 
     public interface DualSipCallback {
         void onAccountRegistered(int simSlot, String username);
@@ -64,6 +66,25 @@ public class SipAccountManager {
         this.core = core;
         this.callback = callback;
         initializeAccounts();
+        attachCoreListener();
+    }
+
+    private void attachCoreListener() {
+        if (core == null) return;
+
+        coreListener = new CoreListenerStub() {
+            @Override
+            public void onAccountRegistrationStateChanged(Core core, Account account,
+                    RegistrationState state, String message) {
+                handleRegistrationStateChanged(account, state, message);
+            }
+
+            @Override
+            public void onCallStateChanged(Core core, Call call, Call.State state, String message) {
+                handleCallStateChanged(call, state, message);
+            }
+        };
+        core.addListener(coreListener);
     }
 
     private void initializeAccounts() {
@@ -113,8 +134,13 @@ public class SipAccountManager {
                     Log.w(TAG, "Skip account " + sipAcc.simSlot + ": incomplete config");
                     continue;
                 }
+                sipAcc.registered = false;
+                sipAcc.currentCall = null;
                 registerAccount(sipAcc);
             }
+
+            // Ensure Linphone core engine is running so REGISTER/INVITE events are processed.
+            core.start();
         } catch (Exception e) {
             Log.e(TAG, "registerAll failed: " + e.getMessage());
         }
@@ -186,7 +212,7 @@ public class SipAccountManager {
         try {
             String dest = extensionOrNumber;
             if (!dest.contains("@")) {
-                dest = "sip:" + dest + "@" + sipAcc.host;
+                dest = "sip:" + dest + "@" + sipAcc.host + ":" + sipAcc.port;
             } else if (!dest.startsWith("sip:")) {
                 dest = "sip:" + dest;
             }
@@ -310,6 +336,19 @@ public class SipAccountManager {
             }
         }
 
+        // Incoming calls may not be tracked yet, map by account.
+        if (simSlot == -1 && call != null) {
+            Account callAccount = call.getAccount();
+            if (callAccount != null) {
+                for (SipAccount sipAcc : accounts.values()) {
+                    if (sipAcc.account == callAccount) {
+                        simSlot = sipAcc.simSlot;
+                        break;
+                    }
+                }
+            }
+        }
+
         if (simSlot == -1) {
             Log.w(TAG, "handleCallStateChanged: call not tracked");
             return;
@@ -360,7 +399,11 @@ public class SipAccountManager {
 
     public void destroy() {
         hangupAll();
+        if (core != null && coreListener != null) {
+            core.removeListener(coreListener);
+        }
         accounts.clear();
+        coreListener = null;
         core = null;
         callback = null;
     }
