@@ -86,8 +86,12 @@ jobs:
           sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file("keystore\/release.keystore")\n            storePassword "android123"\n            keyAlias "release"\n            keyPassword "android123"\n        }\n    }\n' $BFILE
           sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
 
-          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n}\n' >> $BFILE
+          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.99"\n}\n' >> $BFILE
 
+          # Add Linphone maven repository to settings.gradle
+          sed -i 's|maven { url(new URI("https://maven.google.com"))}|maven { url(new URI("https://maven.google.com"))}
+            maven { url "https://download.linphone.org/maven_repository/" }|' $APP/android/settings.gradle
+          sed -i '/google()/a\            maven { url "https://download.linphone.org/maven_repository/" }' $APP/android/settings.gradle
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
           printf '%s\n' \
