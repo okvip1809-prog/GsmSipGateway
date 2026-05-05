@@ -1,3 +1,0 @@
--keep class com.sipphone1001.** { *; }
--keep class org.linphone.** { *; }
--dontwarn org.linphone.**

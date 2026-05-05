@@ -26,7 +26,7 @@ jobs:
           distribution: 'temurin'
 
       - name: Init React Native project
-        run: npx --yes react-native@0.73.6 init AppProject --version 0.73.6 --skip-install
+        run: npx react-native@0.73.6 init AppProject --version 0.73.6 --skip-install
 
       - name: Install dependencies
         run: |
@@ -76,55 +76,17 @@ jobs:
           APP=$GITHUB_WORKSPACE/AppProject
           BFILE=$APP/android/app/build.gradle
 
-          sed -i 's/namespace \"com\.appproject\"/namespace \"com.gsmsipgateway\"/' $BFILE
-          sed -i 's/applicationId \"com\.appproject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
-          sed -i 's/namespace \"com\.AppProject\"/namespace \"com.gsmsipgateway\"/' $BFILE
-          sed -i 's/applicationId \"com\.AppProject\"/applicationId \"com.gsmsipgateway\"/' $BFILE
+          sed -i 's/namespace "com\.appproject"/namespace "com.gsmsipgateway"/' $BFILE
+          sed -i 's/applicationId "com\.appproject"/applicationId "com.gsmsipgateway"/' $BFILE
+          sed -i 's/namespace "com\.AppProject"/namespace "com.gsmsipgateway"/' $BFILE
+          sed -i 's/applicationId "com\.AppProject"/applicationId "com.gsmsipgateway"/' $BFILE
           sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $BFILE
           sed -i 's/minSdkVersion 21/minSdkVersion 26/' $BFILE
 
-          sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file(\"keystore\/release.keystore\")\n            storePassword \"android123\"\n            keyAlias \"release\"\n            keyPassword \"android123\"\n        }\n    }\n' $BFILE
-          # Replace debug signingConfig in release block if present; otherwise inject it
-          if grep -q 'signingConfig signingConfigs\.debug' $BFILE; then
-            sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
-          else
-            sed -i '/release {/a\            signingConfig signingConfigs.release' $BFILE
-          fi
+          sed -i '/buildTypes {/i\    signingConfigs {\n        release {\n            storeFile file("keystore\/release.keystore")\n            storePassword "android123"\n            keyAlias "release"\n            keyPassword "android123"\n        }\n    }\n' $BFILE
+          sed -i 's/signingConfig signingConfigs\.debug/signingConfig signingConfigs.release/' $BFILE
 
-          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.5"\n}\n' >> $BFILE
-
-          # Fix PREFER_SETTINGS -> PREFER_PROJECT so allprojects repos are used
-          SETTINGS=$APP/android/settings.gradle
-          sed -i 's/RepositoriesMode\.PREFER_SETTINGS/RepositoriesMode.PREFER_PROJECT/g' $SETTINGS
-          echo "=== RepositoriesMode check ==="
-          grep 'RepositoriesMode' $SETTINGS || echo 'No PREFER_SETTINGS (OK)'
-
-          # Also inject Linphone repo into settings.gradle after google() in repositories block
-          sed -i '/google()/a\        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }' $SETTINGS || echo "sed patch skipped"
-          echo "=== settings.gradle after Linphone inject ==="
-          grep -A2 'maven.*linphone' $SETTINGS || echo "Linphone not yet in settings.gradle (allprojects fallback active)"
-
-          # Add Linphone repo to TOP-LEVEL android/build.gradle allprojects block
-          ROOT_BUILD=$APP/android/build.gradle
-          printf '\nallprojects {\n    repositories {\n        maven { url "https://linphone.org/maven_repository/" }\n        maven { url "https://download.linphone.org/maven_repository/" }\n    }\n}\n' >> $ROOT_BUILD
-          echo "=== Linphone in root build.gradle ==="
-          grep -n 'linphone' $ROOT_BUILD && echo 'OK: Linphone in root build.gradle' || echo 'ERROR: Not found'
-
-          # Fix minSdkVersion in root build.gradle (RN 0.73.x stores it in ext block here)
-          sed -i 's/minSdkVersion = 21/minSdkVersion = 26/' $ROOT_BUILD
-          sed -i 's/minSdkVersion 21/minSdkVersion 26/' $ROOT_BUILD
-          echo "=== minSdk in root build.gradle ==="
-          grep 'minSdkVersion' $ROOT_BUILD || echo 'minSdkVersion not in root (check app/build.gradle)'
-
-          # Write diagnostics to step summary
-          echo '## settings.gradle after patch' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat $SETTINGS >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '## root android/build.gradle after patch' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          cat $ROOT_BUILD >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n}\n' >> $BFILE
 
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
@@ -135,7 +97,6 @@ jobs:
             'newArchEnabled=false' \
             'hermesEnabled=true' \
             > $APP/android/gradle.properties
-
 
           printf '%s\n' \
             'distributionBase=GRADLE_USER_HOME' \
@@ -152,8 +113,6 @@ jobs:
       - name: Generate Keystore
         run: |
           mkdir -p $GITHUB_WORKSPACE/AppProject/android/app/keystore
-          # FIX: Removed stray blank line between "keytool -genkeypair -v \" and "-keystore ..."
-          # The blank line was breaking the shell line-continuation (\) causing keytool to fail
           keytool -genkeypair -v \
             -keystore $GITHUB_WORKSPACE/AppProject/android/app/keystore/release.keystore \
             -alias release -keyalg RSA -keysize 2048 -validity 10000 \
@@ -164,33 +123,9 @@ jobs:
         run: |
           cd $GITHUB_WORKSPACE/AppProject/android
           chmod +x gradlew
-          set +e
-          ./gradlew assembleRelease --no-daemon --stacktrace 2>&1 | tee /tmp/gradle.log
-          BUILD_EXIT=${PIPESTATUS[0]}
-          # Write error summary publicly via step summary
-          echo '## Gradle Build Output (last 80 lines)' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -80 /tmp/gradle.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo '## Gradle Error Extract' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -nE 'FAILURE:|What went wrong:|Execution failed|Could not resolve|Manifest merger failed|minSdkVersion|A problem occurred|BUILD FAILED' /tmp/gradle.log | tail -120 >> $GITHUB_STEP_SUMMARY || true
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          echo "=== LAST 80 LINES OF GRADLE LOG ==="
-          tail -80 /tmp/gradle.log
-          exit $BUILD_EXIT
+          ./gradlew assembleRelease --no-daemon
         env:
-          GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8"
-          JAVA_TOOL_OPTIONS: "-Dfile.encoding=UTF-8"
-
-
-      - name: Upload Build Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-log
-          path: /tmp/gradle.log
-          retention-days: 3
+          GRADLE_OPTS: "-Xmx4096m -XX:MaxMetaspaceSize=512m"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

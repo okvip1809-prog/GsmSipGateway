@@ -1,3 +1,2 @@
-# Project specific ProGuard rules
+-keep class org.linphone.** { *; }
 -keep class com.gsmsipgateway.** { *; }
--dontwarn com.gsmsipgateway.**
