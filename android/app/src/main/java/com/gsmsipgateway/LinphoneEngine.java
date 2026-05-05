@@ -34,6 +34,8 @@ public class LinphoneEngine {
     private String host;
     private int port;
     private String user;
+    private String pass;
+    private TransportType preferredTransport = TransportType.Udp;
 
     public interface BridgeCallback {
         void onSipRegistered();
@@ -79,8 +81,19 @@ public class LinphoneEngine {
             Factory factory = Factory.instance();
             factory.setDebugMode(false, TAG);
             core = factory.createCore(null, null, this.ctx);
+
             setupListeners();
-            Log.d(TAG, "Linphone Core created successfully (Android 12+ compatible)");
+
+            // core.iterate() must be called regularly on the main thread so Linphone
+            // dispatches SIP/call-state events (registration, INVITE, BYE, etc.)
+            mainHandler.post(new Runnable() {
+                @Override public void run() {
+                    if (core != null) core.iterate();
+                    mainHandler.postDelayed(this, 20);
+                }
+            });
+
+            Log.d(TAG, "Linphone Core created (iterate started)");
         } catch (Exception e) {
             Log.e(TAG, "Linphone Core init failed: " + e.getMessage());
             if (callback != null) {
@@ -104,6 +117,19 @@ public class LinphoneEngine {
                     int code = reason.toInt();
                     String errMsg = sipErrorName(code) + ": " + message;
                     Log.e(TAG, "Registration FAILED | code=" + code + " | " + errMsg);
+
+                    // Retry registration over TCP once when UDP path is blocked by network/NAT.
+                    if ((code == 1 || code == 9 || code == 21)
+                            && preferredTransport == TransportType.Udp
+                            && host != null && !host.isEmpty()
+                            && user != null && !user.isEmpty()
+                            && pass != null && !pass.isEmpty()) {
+                        preferredTransport = TransportType.Tcp;
+                        Log.w(TAG, "Retrying register with TCP transport after UDP network error");
+                        register(host, port, user, pass);
+                        return;
+                    }
+
                     mainHandler.post(() -> {
                         if (callback != null) callback.onSipRegistrationFailed(code, errMsg);
                     });
@@ -157,13 +183,36 @@ public class LinphoneEngine {
     }
 
     public void register(String host, int port, String user, String pass) {
-        this.host = host;
-        this.port = port;
-        this.user = user;
+        String cleanHost = host == null ? "" : host.trim();
+        if (cleanHost.startsWith("sip:")) {
+            cleanHost = cleanHost.substring(4);
+        }
+        int atIdx = cleanHost.indexOf('@');
+        if (atIdx >= 0 && atIdx + 1 < cleanHost.length()) {
+            cleanHost = cleanHost.substring(atIdx + 1);
+        }
+        int semiIdx = cleanHost.indexOf(';');
+        if (semiIdx > 0) {
+            cleanHost = cleanHost.substring(0, semiIdx);
+        }
+        String cleanUser = user == null ? "" : user.trim();
+        String cleanPass = pass == null ? "" : pass.trim();
+        int safePort = port > 0 ? port : 5060;
+
+        this.host = cleanHost;
+        this.port = safePort;
+        this.user = cleanUser;
+        this.pass = cleanPass;
 
         if (core == null) {
             Log.e(TAG, "register skipped: core is null");
             if (callback != null) callback.onSipRegistrationFailed(-1, "Core not initialized");
+            return;
+        }
+
+        if (cleanHost.isEmpty() || cleanUser.isEmpty() || cleanPass.isEmpty()) {
+            Log.e(TAG, "register skipped: missing host/user/pass");
+            if (callback != null) callback.onSipRegistrationFailed(-3, "Missing host/username/password");
             return;
         }
 
@@ -176,22 +225,20 @@ public class LinphoneEngine {
 
             // Add authentication info
             AuthInfo authInfo = Factory.instance().createAuthInfo(
-                user, user, pass, null, null, host);
+                cleanUser, cleanUser, cleanPass, null, null, cleanHost);
             core.addAuthInfo(authInfo);
 
             // Build account params
             AccountParams params = core.createAccountParams();
 
             // Identity: sip:user@host
-            Address identity = Factory.instance().createAddress("sip:" + user + "@" + host);
+            Address identity = Factory.instance().createAddress("sip:" + cleanUser + "@" + cleanHost);
             if (identity == null) throw new Exception("Invalid identity address");
             params.setIdentityAddress(identity);
 
-            // Server address with explicit UDP transport
-            Address serverAddr = Factory.instance()
-                    .createAddress("sip:" + host + ":" + port);
+            Address serverAddr = Factory.instance().createAddress("sip:" + cleanHost + ":" + safePort);
             if (serverAddr == null) throw new Exception("Invalid server address");
-            serverAddr.setTransport(TransportType.Udp);
+            serverAddr.setTransport(preferredTransport);
             params.setServerAddress(serverAddr);
             params.setOutboundProxyEnabled(true);
 
@@ -206,7 +253,8 @@ public class LinphoneEngine {
             // Start core (safe to call even if already running in Linphone 5.x)
             core.start();
 
-            Log.d(TAG, "SIP register initiated: sip:" + user + "@" + host + ":" + port);
+            Log.d(TAG, "SIP register initiated: sip:" + cleanUser + "@" + cleanHost + ":" + safePort
+                + " via " + preferredTransport);
         } catch (Exception e) {
             Log.e(TAG, "register exception: " + e.getMessage());
             if (callback != null) callback.onSipRegistrationFailed(-2, "Exception: " + e.getMessage());
