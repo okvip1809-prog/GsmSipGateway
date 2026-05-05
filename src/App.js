@@ -37,7 +37,7 @@ export default function App() {
   const [port, setPort] = useState('5060');
   const [username, setUsername] = useState('android_gsm1');
   const [password, setPassword] = useState('');
-  const [bridgeExtension, setBridgeExtension] = useState('1000');
+  const [bridgeExtension, setBridgeExtension] = useState('1001');
   const [answerRings, setAnswerRings] = useState('1');
   const [status, setStatus] = useState('Not configured');
 
