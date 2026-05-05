@@ -13,28 +13,33 @@ import android.telecom.TelecomManager;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
 import org.linphone.core.Call;
+import org.linphone.core.Core;
+import org.linphone.core.Factory;
 
-
-public class GsmSipBridgeService extends Service implements LinphoneEngine.BridgeCallback {
+/**
+ * Dual SIM Gateway Service - ho tro 2 tai khoan SIP cung luc
+ * SIM Slot 0 -> SIP Account 1001
+ * SIM Slot 1 -> SIP Account 1002
+ */
+public class GsmSipBridgeService extends Service implements SipAccountManager.DualSipCallback {
     private static final String TAG = "GsmSipBridgeService";
     private static final String CH = "gsm_sip_bridge";
     private static final int RING_INTERVAL_MS = 5000;
-    private LinphoneEngine sip;
-    private String host, user, pass, ext;
-    private int port, answerRings;
-    private boolean isSipRegistered = false;
-    private boolean bridgeInProgress = false;
-    private int bridgeAttempts = 0;
-    private int sipRetryCount = 0;
-    private static final int MAX_SIP_RETRIES = Integer.MAX_VALUE; // never give up
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable bridgeRunnable = this::bridgeToExtension;
-    private final Runnable answerRunnable = this::answerAndBridge;
-    private final Runnable reRegisterRunnable = this::reload;
+    private static final int MAX_SIP_RETRIES = Integer.MAX_VALUE;
+
+    private Core core;
+    private SipAccountManager sipMgr;
     private AudioManager audioManager;
     private PowerManager.WakeLock wakeLock;
     private ConnectivityManager.NetworkCallback networkCallback;
 
+    private final boolean[] bridgeInProgress = new boolean[2];
+    private final int[] bridgeAttempts = new int[2];
+    private final int[] sipRetryCount = new int[2];
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable[] bridgeRunnables = new Runnable[2];
+    private final Runnable[] answerRunnables = new Runnable[2];
+    private Runnable reRegisterRunnable;
 
     @Override
     public void onCreate() {
@@ -47,16 +52,38 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
             wakeLock.setReferenceCounted(false);
             wakeLock.acquire(10 * 60 * 1000L);
         }
+
+        try {
+            Factory factory = Factory.instance();
+            factory.setDebugMode(false, TAG);
+            core = factory.createCore(null, null, this);
+            Log.d(TAG, "Linphone Core created");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create Linphone Core: " + e.getMessage());
+            updateNote("Failed to create SIP engine");
+            return;
+        }
+
+        sipMgr = new SipAccountManager(core, this);
+
+        for (int i = 0; i < 2; i++) {
+            final int slot = i;
+            bridgeRunnables[i] = () -> bridgeToExtension(slot);
+            answerRunnables[i] = () -> answerAndBridge(slot);
+        }
+        reRegisterRunnable = this::reloadAccounts;
+
         startForeground(1, note("Initializing..."));
         registerNetworkCallback();
-        reload();
+        reloadAccounts();
     }
 
     private void registerNetworkCallback() {
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         if (cm == null) return;
         NetworkRequest req = new NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET).build();
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build();
         networkCallback = new ConnectivityManager.NetworkCallback() {
             @Override
             public void onAvailable(Network network) {
@@ -65,69 +92,82 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
                 handler.postDelayed(reRegisterRunnable, 2000);
             }
         };
-        try { cm.registerNetworkCallback(req, networkCallback); }
-        catch (Exception e) { Log.e(TAG, "registerNetworkCallback failed: " + e.getMessage()); }
+        try {
+            cm.registerNetworkCallback(req, networkCallback);
+        } catch (Exception e) {
+            Log.e(TAG, "registerNetworkCallback failed: " + e.getMessage());
+        }
     }
 
-    private void reload() {
-        SharedPreferences p = getSharedPreferences("sip_config", MODE_PRIVATE);
-        host = p.getString("host", "103.82.193.58");
-        port = p.getInt("port", 5060);
-        user = p.getString("username", "3001");
-        pass = p.getString("password", "");
-        ext  = p.getString("bridge_ext", "1001");
-        host = host != null ? host.trim() : "";
-        user = user != null ? user.trim() : "";
-        pass = pass != null ? pass.trim() : "";
-        ext = ext != null ? ext.trim() : "1001";
-        answerRings = Math.max(1, p.getInt("answer_rings", 1));
-        isSipRegistered = false;
-        bridgeInProgress = false;
-        bridgeAttempts = 0;
-        sipRetryCount = 0;
-        handler.removeCallbacks(answerRunnable);
-        handler.removeCallbacks(bridgeRunnable);
-        if (sip != null) sip.destroy();
+    private void reloadAccounts() {
+        if (sipMgr == null || core == null) return;
 
-        if (host == null || host.trim().isEmpty()
-                || user == null || user.trim().isEmpty()
-                || pass == null || pass.trim().isEmpty()) {
-            sip = null;
-            updateNote("SIP config missing (host/user/password)");
-            Log.w(TAG, "Skip SIP register: incomplete config");
-            return;
+        SharedPreferences p = getSharedPreferences("sip_config", MODE_PRIVATE);
+        String host = p.getString("host", "103.82.193.58");
+        int port = p.getInt("port", 5060);
+
+        String user1 = p.getString("username_sim1", "1001");
+        String pass1 = p.getString("password_sim1", "abc123123");
+        sipMgr.configureAccount(SipAccountManager.ACCOUNT_SIM1, host, port, user1, pass1, user1);
+
+        String user2 = p.getString("username_sim2", "1002");
+        String pass2 = p.getString("password_sim2", "abc123123");
+        sipMgr.configureAccount(SipAccountManager.ACCOUNT_SIM2, host, port, user2, pass2, user2);
+
+        for (int i = 0; i < 2; i++) {
+            bridgeInProgress[i] = false;
+            bridgeAttempts[i] = 0;
+            sipRetryCount[i] = 0;
+            handler.removeCallbacks(answerRunnables[i]);
+            handler.removeCallbacks(bridgeRunnables[i]);
         }
 
-        sip = new LinphoneEngine(this, this);
-        sip.register(host, port, user, pass);
-        updateNote("Registering SIP " + user + "@" + host + ":" + port + "...");
+        sipMgr.registerAll();
+        updateNote("Registering SIP accounts...");
+        Log.d(TAG, "Reloaded accounts: " + user1 + " & " + user2 + " @ " + host + ":" + port);
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && intent.getAction() != null) {
+            int simSlot = intent.getIntExtra("sim_slot", 0);
+            if (simSlot < 0 || simSlot > 1) {
+                simSlot = 0;
+            }
+
             switch (intent.getAction()) {
-                case "ACTION_INCOMING_CALL":
+                case "ACTION_INCOMING_CALL": {
                     String caller = intent.getStringExtra("caller_number");
-                    bridgeInProgress = true;
-                    bridgeAttempts = 0;
-                    handler.removeCallbacks(answerRunnable);
-                    handler.removeCallbacks(bridgeRunnable);
+                    Log.d(TAG, "Incoming call from " + caller + " on SIM slot " + simSlot);
+                    bridgeInProgress[simSlot] = true;
+                    bridgeAttempts[simSlot] = 0;
+                    handler.removeCallbacks(answerRunnables[simSlot]);
+                    handler.removeCallbacks(bridgeRunnables[simSlot]);
+
+                    SharedPreferences p = getSharedPreferences("sip_config", MODE_PRIVATE);
+                    int answerRings = Math.max(1, p.getInt("answer_rings", 1));
                     int answerDelayMs = Math.max(0, answerRings - 1) * RING_INTERVAL_MS;
-                    updateNote("Incoming: " + caller + " | answering after ring " + answerRings);
-                    handler.postDelayed(answerRunnable, answerDelayMs);
+
+                    String statusTxt = "SIM" + (simSlot + 1) + " incoming: " + caller + " | answering after ring " + answerRings;
+                    updateNote(statusTxt);
+                    handler.postDelayed(answerRunnables[simSlot], answerDelayMs);
                     break;
-                case "ACTION_CALL_ENDED":
-                    handler.removeCallbacks(answerRunnable);
-                    handler.removeCallbacks(bridgeRunnable);
-                    bridgeInProgress = false;
-                    bridgeAttempts = 0;
-                    if (sip != null) sip.hangup();
+                }
+                case "ACTION_CALL_ENDED": {
+                    Log.d(TAG, "Call ended on SIM slot " + simSlot);
+                    handler.removeCallbacks(answerRunnables[simSlot]);
+                    handler.removeCallbacks(bridgeRunnables[simSlot]);
+                    bridgeInProgress[simSlot] = false;
+                    bridgeAttempts[simSlot] = 0;
+                    if (sipMgr != null) {
+                        sipMgr.hangup(simSlot);
+                    }
                     resetAudio();
                     updateNote("Ready - Waiting...");
                     break;
+                }
                 case "ACTION_RELOAD":
-                    reload();
+                    reloadAccounts();
                     break;
                 case "ACTION_STOP":
                     Log.d(TAG, "Stop requested");
@@ -140,77 +180,114 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
 
     private void autoAnswer() {
         try {
-            TelecomManager tm = (TelecomManager) getSystemService(TELECOM_SERVICE);
+            TelecomManager tm = getSystemService(TelecomManager.class);
             if (tm != null) tm.acceptRingingCall();
             Log.d(TAG, "GSM auto-answered");
-        } catch (SecurityException e) { Log.e(TAG, e.getMessage()); }
+        } catch (SecurityException e) {
+            Log.e(TAG, e.getMessage());
+        }
     }
 
-    private void answerAndBridge() {
-        if (!bridgeInProgress) {
-            return;
-        }
+    private void answerAndBridge(int simSlot) {
+        if (!bridgeInProgress[simSlot]) return;
         prepareAudio();
         autoAnswer();
-        handler.removeCallbacks(bridgeRunnable);
-        handler.postDelayed(bridgeRunnable, 1200);
+        handler.removeCallbacks(bridgeRunnables[simSlot]);
+        handler.postDelayed(bridgeRunnables[simSlot], 1200);
     }
 
-    private void bridgeToExtension() {
-        if (!bridgeInProgress) {
+    private void bridgeToExtension(int simSlot) {
+        if (!bridgeInProgress[simSlot]) return;
+
+        if (sipMgr == null || !sipMgr.isAccountRegistered(simSlot)) {
+            scheduleBridgeRetry(simSlot, "SIP account " + simSlot + " not registered yet");
             return;
         }
-        if (!isSipRegistered) {
-            scheduleBridgeRetry("SIP not registered yet");
-            return;
-        }
-        // FIX: indentation was broken in original (Log line had no leading whitespace)
-        Log.d(TAG, "SIP registered, bridging to extension " + ext);
-        updateNote("Dialing SIP extension...");
-        boolean success = sip.callSip(ext, host, port);
+
+        SipAccountManager.SipAccount acc = sipMgr.getAccount(simSlot);
+        String ext = acc != null ? acc.extension : "";
+
+        Log.d(TAG, "Bridging SIM slot " + simSlot + " to extension " + ext);
+        updateNote("SIM" + (simSlot + 1) + " dialing " + ext + "...");
+
+        boolean success = sipMgr.callExtension(simSlot, ext);
         if (!success) {
-            scheduleBridgeRetry("Failed to dial " + ext);
+            scheduleBridgeRetry(simSlot, "Failed to dial extension from slot " + simSlot);
         }
     }
 
-    @Override public void onSipRegistered() {
-        isSipRegistered = true;
-        Log.d(TAG, "SIP Registration successful");
-        updateNote("SIP Registered - Ready");
+    private void scheduleBridgeRetry(int simSlot, String reason) {
+        bridgeAttempts[simSlot]++;
+        if (bridgeAttempts[simSlot] > 10) {
+            bridgeInProgress[simSlot] = false;
+            updateNote("SIM" + (simSlot + 1) + " bridge failed");
+            Log.e(TAG, reason + ", giving up after " + bridgeAttempts[simSlot] + " attempts");
+            return;
+        }
+        Log.w(TAG, reason + ", retrying in 500ms");
+        handler.postDelayed(bridgeRunnables[simSlot], 500);
     }
 
-    @Override public void onSipRegistrationFailed(int errorCode, String errorMessage) {
-        isSipRegistered = false;
-        sipRetryCount++;
-        Log.e(TAG, "SIP Registration failed | code=" + errorCode + " | " + errorMessage + " | attempt=" + sipRetryCount);
-        // No hard limit — always retry with exponential back-off (cap 60s)
-        if (sipRetryCount > 10) sipRetryCount = 10; // cap for delay calculation only
-        long delayMs = Math.min(5000L * (1L << (sipRetryCount - 1)), 60000L);
-        updateNote("Reg failed [" + LinphoneEngine.sipErrorName(errorCode) + "] retry " + sipRetryCount + "/" + MAX_SIP_RETRIES + " in " + (delayMs/1000) + "s");
+    @Override
+    public void onAccountRegistered(int simSlot, String username) {
+        Log.d(TAG, "SIP Account registered: slot=" + simSlot + " user=" + username);
+        updateNote("SIM" + (simSlot + 1) + " (" + username + ") Registered");
+        sipRetryCount[simSlot] = 0;
+    }
+
+    @Override
+    public void onAccountRegistrationFailed(int simSlot, int errorCode, String errorMessage) {
+        sipRetryCount[simSlot]++;
+        Log.e(TAG, "SIP registration failed: slot=" + simSlot + " code=" + errorCode + " | " + errorMessage);
+
+        int backoffPower = Math.min(sipRetryCount[simSlot] - 1, 10);
+        long delayMs = Math.min(5000L * (1L << backoffPower), 60000L);
+        updateNote("SIM" + (simSlot + 1) + " reg failed, retry in " + (delayMs / 1000) + "s");
+
         handler.postDelayed(() -> {
-            if (sip != null) {
-                Log.d(TAG, "Retrying SIP registration...");
-                sip.register(host, port, user, pass);
+            if (sipMgr != null) {
+                Log.d(TAG, "Retrying SIP registration for slot " + simSlot);
+                sipMgr.registerAll();
             }
         }, delayMs);
     }
 
-    /**
-     * Asterisk gọi vào Android (3001) để yêu cầu gọi GSM ra ngoài (VD: 1001 bấm 0351234567)
-     * Đối với luồng này:
-     *   1001 -> Asterisk -> INVITE sip:0351234567@android -> app (3001) -> GSM 0351234567
-     */
     @Override
-    public void onSipIncomingCall(Call incomingCall, String dialedNumber) {
-        Log.d(TAG, "Incoming SIP from Asterisk - outbound GSM to: " + dialedNumber);
+    public void onAccountCallConnected(int simSlot) {
+        Log.d(TAG, "SIP call connected: slot=" + simSlot);
+        updateNote("SIM" + (simSlot + 1) + " Bridge Active");
+    }
+
+    @Override
+    public void onAccountCallEnded(int simSlot) {
+        Log.d(TAG, "SIP call ended: slot=" + simSlot);
+        bridgeInProgress[simSlot] = false;
+        bridgeAttempts[simSlot] = 0;
+        resetAudio();
+        updateNote("Ready - Waiting...");
+
+        try {
+            TelecomManager tm = getSystemService(TelecomManager.class);
+            if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                tm.endCall();
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onIncomingCall(int simSlot, Call call, String dialedNumber) {
+        Log.d(TAG, "Incoming SIP from Asterisk: slot=" + simSlot + " number=" + dialedNumber);
         if (dialedNumber == null || dialedNumber.trim().isEmpty()) {
-            Log.e(TAG, "onSipIncomingCall: no number, ignoring");
+            Log.e(TAG, "onIncomingCall: no number, ignoring");
             return;
         }
-        // Trả lời cuộc gọi SIP từ Asterisk
-        if (sip != null) sip.answerIncomingCall(incomingCall);
-        // Gọi GSM ra ngoài
-        updateNote("Outbound GSM: " + dialedNumber);
+
+        if (sipMgr != null) {
+            sipMgr.answerCall(simSlot);
+        }
+
+        updateNote("SIM" + (simSlot + 1) + " Outbound GSM: " + dialedNumber);
         prepareAudio();
         try {
             Intent intent = new Intent(Intent.ACTION_CALL);
@@ -223,73 +300,60 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         }
     }
 
-    @Override public void onSipCallConnected() { updateNote("Bridge Active"); }
-
-    @Override public void onSipCallEnded() {
-        bridgeInProgress = false;
-        bridgeAttempts = 0;
-        // Kết thúc cuộc gọi GSM nếu đang hoạt động (dùng cho luồng gọi ra GSM)
-        try {
-            TelecomManager tm = getSystemService(TelecomManager.class);
-            if (tm != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                tm.endCall();
-            }
-        } catch (Exception ignored) {}
-        resetAudio();
-        updateNote("Ready - Waiting...");
-    }
-
-    private void scheduleBridgeRetry(String reason) {
-        bridgeAttempts++;
-        if (bridgeAttempts > 10) {
-            bridgeInProgress = false;
-            updateNote("Bridge failed");
-            Log.e(TAG, reason + ", giving up after " + bridgeAttempts + " attempts");
-            return;
-        }
-        Log.w(TAG, reason + ", retrying in 500ms");
-        handler.postDelayed(bridgeRunnable, 500);
-    }
-
     private void prepareAudio() {
-        // NOTE: Linphone SDK (Android 12+ compatible) manages AudioManager internally.
-        // We only set the mode to MODE_IN_COMMUNICATION here; Linphone handles the rest.
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
             audioManager.setSpeakerphoneOn(false);
-            Log.d(TAG, "Audio mode set to IN_COMMUNICATION (Linphone manages audio focus)");
+            Log.d(TAG, "Audio mode set to IN_COMMUNICATION");
         }
     }
 
     private void resetAudio() {
         if (audioManager != null) {
             audioManager.setMode(AudioManager.MODE_NORMAL);
-            // Linphone manages audio focus internally; just reset the mode
         }
     }
-
 
     private void createChannel() {
         NotificationChannel c = new NotificationChannel(CH, "GSM-SIP Bridge", NotificationManager.IMPORTANCE_LOW);
         getSystemService(NotificationManager.class).createNotificationChannel(c);
     }
+
     private Notification note(String t) {
         return new NotificationCompat.Builder(this, CH)
-            .setContentTitle("GSM-SIP Gateway").setContentText(t)
-            .setSmallIcon(android.R.drawable.ic_menu_call).setOngoing(true).build();
+            .setContentTitle("GSM-SIP Gateway")
+            .setContentText(t)
+            .setSmallIcon(android.R.drawable.ic_menu_call)
+            .setOngoing(true)
+            .build();
     }
-    private void updateNote(String t) { getSystemService(NotificationManager.class).notify(1, note(t)); }
 
-    @Override public IBinder onBind(Intent i) { return null; }
-    @Override public void onDestroy() {
-        handler.removeCallbacks(answerRunnable);
-        handler.removeCallbacks(bridgeRunnable);
+    private void updateNote(String t) {
+        getSystemService(NotificationManager.class).notify(1, note(t));
+    }
+
+    @Override
+    public IBinder onBind(Intent i) {
+        return null;
+    }
+
+    @Override
+    public void onDestroy() {
         handler.removeCallbacks(reRegisterRunnable);
+        for (int i = 0; i < 2; i++) {
+            handler.removeCallbacks(answerRunnables[i]);
+            handler.removeCallbacks(bridgeRunnables[i]);
+        }
+
         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
         if (cm != null && networkCallback != null) {
-            try { cm.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
+            try {
+                cm.unregisterNetworkCallback(networkCallback);
+            } catch (Exception ignored) {
+            }
         }
-        if (sip != null) { sip.hangup(); sip.destroy(); sip = null; }
+
+        if (sipMgr != null) sipMgr.destroy();
         resetAudio();
         stopForeground(true);
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
