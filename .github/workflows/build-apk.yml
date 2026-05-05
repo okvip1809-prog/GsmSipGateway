@@ -88,10 +88,8 @@ jobs:
 
           printf '\ndependencies {\n    implementation "androidx.core:core:1.12.0"\n    implementation "androidx.localbroadcastmanager:localbroadcastmanager:1.1.0"\n    implementation "org.linphone:linphone-sdk-android:5.3.99"\n}\n' >> $BFILE
 
-          # Add Linphone maven repository to settings.gradle
-          sed -i 's|maven { url(new URI("https://maven.google.com"))}|maven { url(new URI("https://maven.google.com"))}
-            maven { url "https://download.linphone.org/maven_repository/" }|' $APP/android/settings.gradle
-          sed -i '/google()/a\            maven { url "https://download.linphone.org/maven_repository/" }' $APP/android/settings.gradle
+          # Add Linphone maven repository via allprojects block in root build.gradle
+          printf '\nallprojects { repositories { maven { url "https://download.linphone.org/maven_repository/" } } }\n' >> $APP/android/build.gradle
           sed -i "s/kotlinVersion = \".*\"/kotlinVersion = \"1.9.22\"/" $APP/android/build.gradle
 
           printf '%s\n' \
@@ -137,3 +135,4 @@ jobs:
           name: GsmSipGateway-release
           path: AppProject/android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
+
