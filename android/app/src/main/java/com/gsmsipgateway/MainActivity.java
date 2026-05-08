@@ -14,7 +14,8 @@ public class MainActivity extends ReactActivity {
         Manifest.permission.ANSWER_PHONE_CALLS,
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.CALL_PHONE,
-        Manifest.permission.READ_CALL_LOG
+        Manifest.permission.READ_CALL_LOG,
+        Manifest.permission.POST_NOTIFICATIONS
     };
     @Override protected String getMainComponentName() { return "GsmSipGateway"; }
     @Override protected void onCreate(Bundle savedInstanceState) {

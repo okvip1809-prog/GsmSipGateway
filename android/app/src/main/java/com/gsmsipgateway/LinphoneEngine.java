@@ -36,6 +36,7 @@ public class LinphoneEngine {
     private String user;
     private String pass;
     private TransportType preferredTransport = TransportType.Udp;
+    private boolean pushCompatibility = false;
 
     public interface BridgeCallback {
         void onSipRegistered();
@@ -102,6 +103,18 @@ public class LinphoneEngine {
         }
     }
 
+    private TransportType parseTransport(String value) {
+        if (value == null) return TransportType.Udp;
+        switch (value.trim().toLowerCase()) {
+            case "tcp":
+                return TransportType.Tcp;
+            case "tls":
+                return TransportType.Tls;
+            default:
+                return TransportType.Udp;
+        }
+    }
+
     private void setupListeners() {
         core.addListener(new CoreListenerStub() {
             @Override
@@ -126,7 +139,11 @@ public class LinphoneEngine {
                             && pass != null && !pass.isEmpty()) {
                         preferredTransport = TransportType.Tcp;
                         Log.w(TAG, "Retrying register with TCP transport after UDP network error");
-                        register(host, port, user, pass);
+                        register(host, port, user, pass,
+                            preferredTransport == TransportType.Tls ? "tls"
+                                : (preferredTransport == TransportType.Tcp ? "tcp" : "udp"),
+                            pushCompatibility,
+                            "");
                         return;
                     }
 
@@ -182,7 +199,8 @@ public class LinphoneEngine {
         });
     }
 
-    public void register(String host, int port, String user, String pass) {
+    public void register(String host, int port, String user, String pass,
+                         String transport, boolean pushEnabled, String pushToken) {
         String cleanHost = host == null ? "" : host.trim();
         if (cleanHost.startsWith("sip:")) {
             cleanHost = cleanHost.substring(4);
@@ -203,6 +221,8 @@ public class LinphoneEngine {
         this.port = safePort;
         this.user = cleanUser;
         this.pass = cleanPass;
+        this.preferredTransport = parseTransport(transport);
+        this.pushCompatibility = pushEnabled;
 
         if (core == null) {
             Log.e(TAG, "register skipped: core is null");
@@ -243,7 +263,8 @@ public class LinphoneEngine {
             params.setOutboundProxyEnabled(true);
 
             params.setRegisterEnabled(true);
-            params.setExpires(3600);
+            // Push compatibility mode keeps REGISTER refresh shorter for mobile NAT/idle cases.
+            params.setExpires(pushCompatibility ? 600 : 3600);
             params.setPublishEnabled(false);
 
             Account account = core.createAccount(params);
@@ -254,7 +275,8 @@ public class LinphoneEngine {
             core.start();
 
             Log.d(TAG, "SIP register initiated: sip:" + cleanUser + "@" + cleanHost + ":" + safePort
-                + " via " + preferredTransport);
+                + " via " + preferredTransport
+                + (pushCompatibility ? " (push compatibility on)" : ""));
         } catch (Exception e) {
             Log.e(TAG, "register exception: " + e.getMessage());
             if (callback != null) callback.onSipRegistrationFailed(-2, "Exception: " + e.getMessage());

@@ -17,6 +17,10 @@ public class SipBridgeModule extends ReactContextBaseJavaModule {
             p.putString("password", cfg.getString("password"));
             p.putString("bridge_ext", cfg.getString("bridgeExtension"));
             p.putInt("answer_rings", cfg.hasKey("answerRings") ? cfg.getInt("answerRings") : 1);
+            p.putString("transport", cfg.hasKey("transport") ? cfg.getString("transport") : "udp");
+            p.putBoolean("push_enabled", cfg.hasKey("pushEnabled") && cfg.getBoolean("pushEnabled"));
+            p.putString("push_provider", cfg.hasKey("pushProvider") ? cfg.getString("pushProvider") : "fcm");
+            p.putString("push_token", cfg.hasKey("pushToken") ? cfg.getString("pushToken") : "");
             p.apply();
             Intent i = new Intent(getReactApplicationContext(), GsmSipBridgeService.class);
             i.setAction("ACTION_RELOAD");

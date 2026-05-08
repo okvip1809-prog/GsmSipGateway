@@ -15,6 +15,8 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
     private static final int RING_INTERVAL_MS = 5000;
     private LinphoneEngine sip;
     private String host, user, pass, ext;
+    private String transport, pushProvider, pushToken;
+    private boolean pushEnabled;
     private int port, answerRings;
     private int sipRetryCount = 0;
     private boolean bridgeInProgress = false;
@@ -48,6 +50,10 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         user = p.getString("username", "");
         pass = p.getString("password", "");
         ext  = p.getString("bridge_ext", "");
+        transport = p.getString("transport", "udp");
+        pushEnabled = p.getBoolean("push_enabled", false);
+        pushProvider = p.getString("push_provider", "fcm");
+        pushToken = p.getString("push_token", "");
         answerRings = Math.max(1, p.getInt("answer_rings", 1));
         sipRetryCount = 0;
         bridgeInProgress = false;
@@ -58,7 +64,7 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
             updateNote("No config - open app to configure");
             return;
         }
-        if (sip != null) sip.register(host, port, user, pass);
+        if (sip != null) sip.register(host, port, user, pass, transport, pushEnabled, pushToken);
         updateNote("Registering " + user + "@" + host + "...");
     }
 
@@ -141,7 +147,7 @@ public class GsmSipBridgeService extends Service implements LinphoneEngine.Bridg
         updateNote("Reg failed [" + LinphoneEngine.sipErrorName(errorCode) + "], retry in " + (retryDelayMs / 1000) + "s");
         handler.postDelayed(() -> {
             if (sip != null && host != null && host.length() > 0) {
-                sip.register(host, port, user, pass);
+                sip.register(host, port, user, pass, transport, pushEnabled, pushToken);
             }
         }, retryDelayMs);
     }

@@ -1,7 +1,7 @@
 import React, {memo, useState} from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  StyleSheet, Alert, NativeModules, ScrollView
+  StyleSheet, Alert, NativeModules, ScrollView, Switch
 } from 'react-native';
 
 const {SipBridge} = NativeModules;
@@ -33,12 +33,16 @@ const Field = memo(function Field({
 });
 
 export default function App() {
-  const [host, setHost] = useState('192.168.1.100');
+  const [host, setHost] = useState('benhvientrave.com');
   const [port, setPort] = useState('5060');
   const [username, setUsername] = useState('android_gsm1');
   const [password, setPassword] = useState('');
   const [bridgeExtension, setBridgeExtension] = useState('1001');
   const [answerRings, setAnswerRings] = useState('1');
+  const [transport, setTransport] = useState('udp');
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushProvider, setPushProvider] = useState('fcm');
+  const [pushToken, setPushToken] = useState('');
   const [status, setStatus] = useState('Not configured');
 
   const saveAndStart = async () => {
@@ -50,6 +54,10 @@ export default function App() {
         password,
         bridgeExtension: bridgeExtension.trim(),
         answerRings: parseInt(answerRings, 10) || 1,
+        transport,
+        pushEnabled,
+        pushProvider,
+        pushToken,
       });
       setStatus('Running');
       Alert.alert('Success', result);
@@ -91,7 +99,7 @@ export default function App() {
       </View>
       <Text style={styles.section}>FreePBX Settings</Text>
       <Field
-        label="FreePBX IP"
+        label="SIP Host / Domain"
         value={host}
         onChangeText={setHost}
         keyboardType="numbers-and-punctuation"
@@ -102,6 +110,20 @@ export default function App() {
         onChangeText={setPort}
         keyboardType="numeric"
       />
+      <Text style={styles.label}>SIP Transport</Text>
+      <View style={styles.transportRow}>
+        {['udp', 'tcp', 'tls'].map(item => (
+          <TouchableOpacity
+            key={item}
+            style={[styles.transportBtn, transport === item && styles.transportBtnActive]}
+            onPress={() => setTransport(item)}
+          >
+            <Text style={[styles.transportBtnText, transport === item && styles.transportBtnTextActive]}>
+              {item.toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
       <Field
         label="SIP Username"
         value={username}
@@ -124,6 +146,21 @@ export default function App() {
         onChangeText={setAnswerRings}
         keyboardType="numeric"
       />
+      <Text style={styles.section}>Push Compatibility</Text>
+      <View style={styles.pushRow}>
+        <Text style={styles.pushLabel}>Enable push compatibility mode</Text>
+        <Switch value={pushEnabled} onValueChange={setPushEnabled} />
+      </View>
+      <Field
+        label="Push Provider (fcm/apns/custom)"
+        value={pushProvider}
+        onChangeText={setPushProvider}
+      />
+      <Field
+        label="Push Token (optional)"
+        value={pushToken}
+        onChangeText={setPushToken}
+      />
       <TouchableOpacity style={styles.btn} onPress={saveAndStart}>
         <Text style={styles.btnText}>Save & Start Gateway</Text>
       </TouchableOpacity>
@@ -139,6 +176,8 @@ export default function App() {
         <Text style={styles.howtoItem}>2. App auto-answers the GSM call</Text>
         <Text style={styles.howtoItem}>3. Bridges audio to FreePBX via SIP</Text>
         <Text style={styles.howtoItem}>4. FreePBX routes the call normally</Text>
+        <Text style={styles.howtoItem}>5. Transport: {transport.toUpperCase()}</Text>
+        <Text style={styles.howtoItem}>6. Push compatibility: {pushEnabled ? 'Enabled' : 'Disabled'}</Text>
       </View>
     </ScrollView>
   );
@@ -153,6 +192,13 @@ const styles = StyleSheet.create({
   field: {marginBottom: 14},
   label: {color: '#aaa', marginBottom: 5, fontSize: 12},
   input: {backgroundColor: '#1e1e1e', color: '#fff', padding: 12, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a'},
+  transportRow: {flexDirection: 'row', gap: 8, marginBottom: 14},
+  transportBtn: {flex: 1, borderRadius: 8, borderWidth: 1, borderColor: '#2a2a2a', backgroundColor: '#111827', paddingVertical: 10, alignItems: 'center'},
+  transportBtnActive: {backgroundColor: '#2563eb', borderColor: '#2563eb'},
+  transportBtnText: {color: '#9ca3af', fontSize: 12, fontWeight: '700'},
+  transportBtnTextActive: {color: '#fff'},
+  pushRow: {flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#111827', borderWidth: 1, borderColor: '#2a2a2a', borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, marginBottom: 12},
+  pushLabel: {color: '#cbd5e1', fontSize: 13, fontWeight: '500'},
   btn: {backgroundColor: '#2563eb', padding: 16, borderRadius: 10, alignItems: 'center', marginTop: 8, marginBottom: 24},
   btnReload: {backgroundColor: '#2563eb', padding: 16, borderRadius: 10, alignItems: 'center', marginBottom: 12},
   btnStop: {backgroundColor: '#dc2626', padding: 16, borderRadius: 10, alignItems: 'center', marginBottom: 24},
